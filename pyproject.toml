@@ -16,7 +16,7 @@ dev = [
 
 [tool.pytest.ini_options]
 minversion = "8.0"
-testpaths = ["tests"]
+testpaths = ["tests/unit"]
 pythonpath = ["."]
 markers = [
     "performance: workstation performance checks",

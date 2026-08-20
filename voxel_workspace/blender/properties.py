@@ -23,6 +23,11 @@ except ImportError:
 class VoxelMeshProperties(PropertyGroup):
     """Authoritative voxel volume metadata stored on the Mesh datablock."""
     if bpy is not None:
+        schema_version: IntProperty(
+            name="Schema Version",
+            description="Version of the voxel persistence layout",
+            default=1,
+        )
         uuid: StringProperty(
             name="Volume UUID",
             description="Authoritative unique identifier for the voxel volume",
@@ -81,6 +86,7 @@ def init_voxel_mesh_properties(
     extent_max: tuple[int, int, int] = (32, 32, 32),
     brick_size: int = 32,
     voxel_size: float = 1.0,
+    schema_version: int = 1,
 ) -> str:
     """Initialize voxel metadata on a Blender Mesh ID and return its UUID."""
     if not uuid_str:
@@ -92,6 +98,7 @@ def init_voxel_mesh_properties(
     props.extent_max = extent_max
     props.brick_size = brick_size
     props.voxel_size = voxel_size
+    props.schema_version = schema_version
     return uuid_str
 
 

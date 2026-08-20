@@ -8,6 +8,19 @@ from voxel_workspace.blender.properties import (
     register_properties,
     unregister_properties,
 )
+from voxel_workspace.blender.persistence import (
+    SCHEMA_VERSION,
+    pack_bytes_to_i32,
+    unpack_i32_to_bytes,
+    pack_brick,
+    unpack_brick,
+    brick_coord_to_key,
+    key_to_brick_coord,
+    serialize_volume,
+    deserialize_volume,
+    commit_volume_state,
+    init_volume_storage,
+)
 from voxel_workspace.blender.runtime import (
     VoxelVolumeEntry,
     register_volume,
@@ -21,11 +34,27 @@ from voxel_workspace.blender.runtime import (
     get_active_volume,
     deduplicate_mesh_uuids,
     cleanup_stale_volumes,
+    on_depsgraph_update,
+    on_load_post,
+    on_save_pre,
+    on_undo_post,
+    on_redo_post,
     register_runtime,
     unregister_runtime,
 )
 
 __all__ = [
+    "SCHEMA_VERSION",
+    "pack_bytes_to_i32",
+    "unpack_i32_to_bytes",
+    "pack_brick",
+    "unpack_brick",
+    "brick_coord_to_key",
+    "key_to_brick_coord",
+    "serialize_volume",
+    "deserialize_volume",
+    "commit_volume_state",
+    "init_volume_storage",
     "VoxelMeshProperties",
     "VoxelObjectProperties",
     "init_voxel_mesh_properties",

@@ -29,6 +29,7 @@ class VoxelVolumeEntry:
 _REGISTRY: Dict[str, VoxelVolumeEntry] = {}
 _ACTIVE_VOLUME_UUID: Optional[str] = None
 _DEDUPE_GUARD: bool = False
+_UNDO_GUARD: bool = False
 
 
 def get_active_volume_uuid() -> Optional[str]:
@@ -157,6 +158,22 @@ def cleanup_stale_volumes() -> List[str]:
     return stale_uuids
 
 
+def tag_redraw_all_viewports() -> None:
+    """Tag redraw on all 3D Viewport areas across all windows safely."""
+    if bpy is None or not hasattr(bpy, "context") or not hasattr(bpy.context, "window_manager"):
+        return
+    wm = bpy.context.window_manager
+    if wm is None or not hasattr(wm, "windows"):
+        return
+    for window in wm.windows:
+        screen = window.screen
+        if screen is None:
+            continue
+        for area in screen.areas:
+            if area.type == 'VIEW_3D':
+                area.tag_redraw()
+
+
 def on_depsgraph_update(scene, depsgraph) -> None:
     """Depsgraph update handler: trigger guarded UUID deduplication."""
     deduplicate_mesh_uuids(scene, depsgraph)
@@ -168,14 +185,73 @@ def on_load_post(*args) -> None:
     clear_registry()
 
 
+@persistent
+def on_save_pre(*args) -> None:
+    """Pre-save handler: flush dirty runtime grids to Mesh IDProperties."""
+    if bpy is None or not hasattr(bpy, "data") or not hasattr(bpy.data, "meshes"):
+        return
+    from voxel_workspace.blender.persistence import serialize_volume
+
+    mesh_by_uuid: Dict[str, Any] = {}
+    for mesh in bpy.data.meshes:
+        if hasattr(mesh, "voxel_workspace") and mesh.voxel_workspace.uuid:
+            mesh_by_uuid[mesh.voxel_workspace.uuid] = mesh
+
+    for vol_uuid, entry in list(_REGISTRY.items()):
+        mesh = mesh_by_uuid.get(vol_uuid)
+        if mesh is not None and (entry.grid.dirty_bricks or entry.dirty_bricks):
+            serialize_volume(mesh, entry.grid, dirty_only=True)
+            entry.dirty_bricks.clear()
+
+
+@persistent
+def on_undo_post(*args) -> None:
+    """Post-undo handler: invalidate runtime cache and tag viewports for redraw.
+    
+    Guarded against reentrancy. Performs NO datablock writes and pushes NO undo steps.
+    """
+    global _UNDO_GUARD
+    if _UNDO_GUARD:
+        return
+    _UNDO_GUARD = True
+    try:
+        clear_registry()
+        tag_redraw_all_viewports()
+    finally:
+        _UNDO_GUARD = False
+
+
+@persistent
+def on_redo_post(*args) -> None:
+    """Post-redo handler: invalidate runtime cache and tag viewports for redraw.
+    
+    Guarded against reentrancy. Performs NO datablock writes and pushes NO undo steps.
+    """
+    global _UNDO_GUARD
+    if _UNDO_GUARD:
+        return
+    _UNDO_GUARD = True
+    try:
+        clear_registry()
+        tag_redraw_all_viewports()
+    finally:
+        _UNDO_GUARD = False
+
+
 def register_runtime() -> None:
-    """Register lifecycle handlers."""
+    """Register lifecycle handlers idempotently."""
     if bpy is None:
         return
     if on_depsgraph_update not in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.append(on_depsgraph_update)
     if on_load_post not in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.append(on_load_post)
+    if on_save_pre not in bpy.app.handlers.save_pre:
+        bpy.app.handlers.save_pre.append(on_save_pre)
+    if on_undo_post not in bpy.app.handlers.undo_post:
+        bpy.app.handlers.undo_post.append(on_undo_post)
+    if on_redo_post not in bpy.app.handlers.redo_post:
+        bpy.app.handlers.redo_post.append(on_redo_post)
 
 
 def unregister_runtime() -> None:
@@ -187,3 +263,9 @@ def unregister_runtime() -> None:
         bpy.app.handlers.depsgraph_update_post.remove(on_depsgraph_update)
     if on_load_post in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(on_load_post)
+    if on_save_pre in bpy.app.handlers.save_pre:
+        bpy.app.handlers.save_pre.remove(on_save_pre)
+    if on_undo_post in bpy.app.handlers.undo_post:
+        bpy.app.handlers.undo_post.remove(on_undo_post)
+    if on_redo_post in bpy.app.handlers.redo_post:
+        bpy.app.handlers.redo_post.remove(on_redo_post)
