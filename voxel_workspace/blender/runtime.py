@@ -1,0 +1,189 @@
+"""In-memory runtime cache, active volume management, and lifecycle handling."""
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Set, Tuple
+import uuid as uuid_lib
+
+try:
+    import bpy
+    from bpy.app.handlers import persistent
+except ImportError:
+    bpy = None
+    persistent = lambda f: f
+
+from voxel_workspace.constants import BRICK_SIZE, BrickCoord
+from voxel_workspace.core.grid import VoxelGrid
+from voxel_workspace.geometry.buffers import MeshBuffers
+
+
+@dataclass
+class VoxelVolumeEntry:
+    """In-memory runtime state for a single voxel volume."""
+    uuid: str
+    grid: VoxelGrid
+    cpu_buffers: Dict[BrickCoord, MeshBuffers] = field(default_factory=dict)
+    gpu_batches: Dict[BrickCoord, Any] = field(default_factory=dict)
+    dirty_bricks: Set[BrickCoord] = field(default_factory=set)
+    voxel_size: float = 1.0
+
+
+_REGISTRY: Dict[str, VoxelVolumeEntry] = {}
+_ACTIVE_VOLUME_UUID: Optional[str] = None
+_DEDUPE_GUARD: bool = False
+
+
+def get_active_volume_uuid() -> Optional[str]:
+    """Return the currently active volume UUID for editing, or None."""
+    return _ACTIVE_VOLUME_UUID
+
+
+def set_active_volume_uuid(uuid_str: Optional[str]) -> None:
+    """Set the currently active volume UUID for editing (at most one active)."""
+    global _ACTIVE_VOLUME_UUID
+    _ACTIVE_VOLUME_UUID = uuid_str
+
+
+def get_active_volume() -> Optional[VoxelVolumeEntry]:
+    """Return the active volume's runtime entry, or None."""
+    if _ACTIVE_VOLUME_UUID is None:
+        return None
+    return _REGISTRY.get(_ACTIVE_VOLUME_UUID)
+
+
+def register_volume(
+    uuid_str: str,
+    grid: Optional[VoxelGrid] = None,
+    voxel_size: float = 1.0,
+    brick_size: int = BRICK_SIZE,
+    extent_min: tuple[int, int, int] = (0, 0, 0),
+    extent_max: tuple[int, int, int] = (32, 32, 32),
+) -> VoxelVolumeEntry:
+    """Register or replace a volume in the runtime cache."""
+    if not uuid_str:
+        raise ValueError("Cannot register volume with empty UUID")
+    if grid is None:
+        grid = VoxelGrid(extent_min=extent_min, extent_max_exclusive=extent_max, brick_size=brick_size)
+    entry = VoxelVolumeEntry(
+        uuid=uuid_str,
+        grid=grid,
+        voxel_size=voxel_size,
+    )
+    _REGISTRY[uuid_str] = entry
+    return entry
+
+
+def unregister_volume(uuid_str: str) -> None:
+    """Remove a volume from the runtime cache."""
+    global _ACTIVE_VOLUME_UUID
+    if uuid_str in _REGISTRY:
+        del _REGISTRY[uuid_str]
+    if _ACTIVE_VOLUME_UUID == uuid_str:
+        _ACTIVE_VOLUME_UUID = None
+
+
+def get_volume(uuid_str: str) -> Optional[VoxelVolumeEntry]:
+    """Lookup a volume runtime entry by UUID."""
+    return _REGISTRY.get(uuid_str)
+
+
+def has_volume(uuid_str: str) -> bool:
+    """Check if a volume UUID is in the runtime cache."""
+    return uuid_str in _REGISTRY
+
+
+def clear_registry() -> None:
+    """Clear all runtime entries and reset active volume."""
+    global _ACTIVE_VOLUME_UUID
+    _REGISTRY.clear()
+    _ACTIVE_VOLUME_UUID = None
+
+
+def all_volumes() -> Dict[str, VoxelVolumeEntry]:
+    """Return a shallow copy of the runtime registry dictionary."""
+    return dict(_REGISTRY)
+
+
+def deduplicate_mesh_uuids(scene=None, depsgraph=None) -> List[Tuple[Any, str, str]]:
+    """Scan bpy.data.meshes for duplicate UUIDs and repair them with new UUIDs.
+    
+    Guarded against reentrancy and idempotent.
+    Returns a list of repaired tuples: (mesh, old_uuid, new_uuid).
+    """
+    global _DEDUPE_GUARD
+    if _DEDUPE_GUARD or bpy is None or not hasattr(bpy, "data") or not hasattr(bpy.data, "meshes"):
+        return []
+
+    _DEDUPE_GUARD = True
+    repaired: List[Tuple[Any, str, str]] = []
+    try:
+        seen_uuids: Dict[str, Any] = {}
+        for mesh in bpy.data.meshes:
+            if not hasattr(mesh, "voxel_workspace"):
+                continue
+            vol_uuid = mesh.voxel_workspace.uuid
+            if not vol_uuid:
+                continue
+            if vol_uuid not in seen_uuids:
+                seen_uuids[vol_uuid] = mesh
+            else:
+                # Duplicate UUID on a distinct Mesh datablock!
+                new_uuid = str(uuid_lib.uuid4())
+                old_uuid = vol_uuid
+                mesh.voxel_workspace.uuid = new_uuid
+                repaired.append((mesh, old_uuid, new_uuid))
+                seen_uuids[new_uuid] = mesh
+    finally:
+        _DEDUPE_GUARD = False
+
+    return repaired
+
+
+def cleanup_stale_volumes() -> List[str]:
+    """Remove runtime entries for UUIDs that no longer exist in any bpy.data.meshes."""
+    global _ACTIVE_VOLUME_UUID
+    if bpy is None or not hasattr(bpy, "data") or not hasattr(bpy.data, "meshes"):
+        return []
+
+    active_mesh_uuids = set()
+    for mesh in bpy.data.meshes:
+        if hasattr(mesh, "voxel_workspace") and mesh.voxel_workspace.uuid:
+            active_mesh_uuids.add(mesh.voxel_workspace.uuid)
+
+    stale_uuids = [u for u in _REGISTRY if u not in active_mesh_uuids]
+    for u in stale_uuids:
+        del _REGISTRY[u]
+        if _ACTIVE_VOLUME_UUID == u:
+            _ACTIVE_VOLUME_UUID = None
+
+    return stale_uuids
+
+
+def on_depsgraph_update(scene, depsgraph) -> None:
+    """Depsgraph update handler: trigger guarded UUID deduplication."""
+    deduplicate_mesh_uuids(scene, depsgraph)
+
+
+@persistent
+def on_load_post(*args) -> None:
+    """File load handler: reset runtime cache across file opens."""
+    clear_registry()
+
+
+def register_runtime() -> None:
+    """Register lifecycle handlers."""
+    if bpy is None:
+        return
+    if on_depsgraph_update not in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.append(on_depsgraph_update)
+    if on_load_post not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(on_load_post)
+
+
+def unregister_runtime() -> None:
+    """Unregister lifecycle handlers and clean up registry."""
+    clear_registry()
+    if bpy is None:
+        return
+    if on_depsgraph_update in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.remove(on_depsgraph_update)
+    if on_load_post in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(on_load_post)

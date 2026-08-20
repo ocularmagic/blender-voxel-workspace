@@ -5,6 +5,9 @@ try:
 except ImportError:
     bpy = None
 
+from voxel_workspace.blender.properties import register_properties, unregister_properties
+from voxel_workspace.blender.runtime import register_runtime, unregister_runtime
+
 # Central ordered registry of Blender types
 CLASSES: List[Type] = []
 
@@ -22,6 +25,9 @@ def register() -> None:
     if _registered:
         return
 
+    register_properties()
+    register_runtime()
+
     for cls in CLASSES:
         bpy.utils.register_class(cls)
 
@@ -36,5 +42,8 @@ def unregister() -> None:
 
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)
+
+    unregister_runtime()
+    unregister_properties()
 
     _registered = False
