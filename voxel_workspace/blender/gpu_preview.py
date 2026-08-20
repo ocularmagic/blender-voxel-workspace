@@ -192,6 +192,57 @@ def build_brick_gpu_batch(mesh_buffers: Optional[MeshBuffers]) -> Optional[Any]:
     return batch_for_shader(shader, 'TRIS', {'pos': pos, 'color': colors}, indices=ind)
 
 
+def build_voxel_edge_mesh_data(
+    mesh_buffers: Optional[MeshBuffers],
+    surface_offset: float = 0.0,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Return perimeter segments for exposed one-voxel preview quads."""
+    if mesh_buffers is None or mesh_buffers.quad_count == 0:
+        return (
+            np.empty((0, 3), dtype=np.float32),
+            np.empty((0, 2), dtype=np.int32),
+        )
+
+    quads = mesh_buffers.positions.reshape(-1, 4, 3)
+    if surface_offset:
+        normals = np.cross(quads[:, 1] - quads[:, 0], quads[:, 2] - quads[:, 0])
+        lengths = np.linalg.norm(normals, axis=1, keepdims=True)
+        normals = np.divide(normals, lengths, out=np.zeros_like(normals), where=lengths > 0)
+        quads = quads + normals[:, None, :] * surface_offset
+    # Preserve each exposed quad perimeter directly. Shared opaque segments
+    # are visually idempotent and avoiding Python/global deduplication keeps
+    # dirty-brick rebuilds fast.
+    segments = np.concatenate(
+        (
+            quads[:, (0, 1)],
+            quads[:, (1, 2)],
+            quads[:, (2, 3)],
+            quads[:, (3, 0)],
+        ),
+        axis=0,
+    )
+    positions = np.ascontiguousarray(segments.reshape(-1, 3), dtype=np.float32)
+    indices = np.arange(len(positions), dtype=np.int32).reshape(-1, 2)
+    return positions, indices
+
+
+def build_voxel_edge_gpu_batch(
+    mesh_buffers: Optional[MeshBuffers],
+    surface_offset: float = 0.0,
+) -> Optional[Any]:
+    """Create a line batch showing exposed voxel-cell boundaries."""
+    if gpu is None or batch_for_shader is None:
+        return None
+    positions, indices = build_voxel_edge_mesh_data(mesh_buffers, surface_offset)
+    if len(indices) == 0:
+        return None
+    try:
+        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    except Exception:
+        return None
+    return batch_for_shader(shader, 'LINES', {'pos': positions}, indices=indices)
+
+
 def build_bounds_gpu_batch(
     extent_min: Tuple[int, int, int],
     extent_max: Tuple[int, int, int],
@@ -294,6 +345,7 @@ def update_volume_gpu_preview(
     grid = entry.grid
     cpu_buffers = entry.cpu_buffers
     gpu_batches = entry.gpu_batches
+    gpu_edge_batches = entry.gpu_edge_batches
 
     if dirty_only and (dirty_bricks is not None or len(grid.dirty_bricks) > 0 or len(entry.dirty_bricks) > 0) and len(gpu_batches) > 0:
         base_dirty: Set[BrickCoord] = set(dirty_bricks or set()) | set(grid.dirty_bricks) | set(entry.dirty_bricks)
@@ -304,10 +356,10 @@ def update_volume_gpu_preview(
                 for dy in (-1, 0, 1):
                     for dz in (-1, 0, 1):
                         n_coord = (bx + dx, by + dy, bz + dz)
-                        if n_coord in grid.bricks or n_coord in gpu_batches:
+                        if n_coord in grid.bricks or n_coord in gpu_batches or n_coord in gpu_edge_batches:
                             remesh_targets.add(n_coord)
     else:
-        remesh_targets = set(grid.bricks.keys()) | set(gpu_batches.keys())
+        remesh_targets = set(grid.bricks.keys()) | set(gpu_batches.keys()) | set(gpu_edge_batches.keys())
 
     s = grid.brick_size
     v_size = entry.voxel_size
@@ -329,12 +381,19 @@ def update_volume_gpu_preview(
                     gpu_batches[coord] = batch
                 else:
                     gpu_batches.pop(coord, None)
+                edge_batch = build_voxel_edge_gpu_batch(buf, surface_offset=v_size * 0.001)
+                if edge_batch is not None:
+                    gpu_edge_batches[coord] = edge_batch
+                else:
+                    gpu_edge_batches.pop(coord, None)
             else:
                 cpu_buffers.pop(coord, None)
                 gpu_batches.pop(coord, None)
+                gpu_edge_batches.pop(coord, None)
         else:
             cpu_buffers.pop(coord, None)
             gpu_batches.pop(coord, None)
+            gpu_edge_batches.pop(coord, None)
 
     entry.dirty_bricks.clear()
     grid.dirty_bricks.clear()
@@ -346,6 +405,8 @@ def clear_volume_gpu_preview(entry: Any) -> None:
         return
     if hasattr(entry, "gpu_batches"):
         entry.gpu_batches.clear()
+    if hasattr(entry, "gpu_edge_batches"):
+        entry.gpu_edge_batches.clear()
     if hasattr(entry, "cpu_buffers"):
         entry.cpu_buffers.clear()
 
@@ -501,7 +562,18 @@ def _draw_callback() -> None:
                 if batch is not None:
                     batch.draw(flat_shader)
 
-            # 4. Draw hover face highlight if active
+            # 4. Draw exposed voxel-cell boundaries over the colored faces.
+            scene_props = getattr(getattr(context, "scene", None), "voxel_workspace", None)
+            if scene_props is None or scene_props.show_voxel_edges:
+                gpu.state.depth_mask_set(False)
+                uniform_shader.bind()
+                uniform_shader.uniform_float("color", (0.025, 0.025, 0.03, 1.0))
+                for coord, batch in list(entry.gpu_edge_batches.items()):
+                    if batch is not None:
+                        batch.draw(uniform_shader)
+                gpu.state.depth_mask_set(True)
+
+            # 5. Draw hover face highlight if active
             if _HOVER_STATE is not None and _HOVER_STATE.get("coord") is not None:
                 h_coord = _HOVER_STATE["coord"]
                 h_norm = _HOVER_STATE.get("normal", (0, 0, 1))

@@ -22,6 +22,7 @@ class VoxelVolumeEntry:
     grid: VoxelGrid
     cpu_buffers: Dict[BrickCoord, MeshBuffers] = field(default_factory=dict)
     gpu_batches: Dict[BrickCoord, Any] = field(default_factory=dict)
+    gpu_edge_batches: Dict[BrickCoord, Any] = field(default_factory=dict)
     dirty_bricks: Set[BrickCoord] = field(default_factory=set)
     voxel_size: float = 1.0
 

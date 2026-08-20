@@ -30,6 +30,11 @@ def _palette_choice_changed(self, _context):
     self.active_palette_index = int(self.active_palette_choice)
 
 
+def _display_changed(_self, _context):
+    from .runtime import tag_redraw_all_viewports
+    tag_redraw_all_viewports()
+
+
 class VoxelMeshProperties(PropertyGroup):
     """Authoritative voxel volume metadata stored on the Mesh datablock."""
     if bpy is not None:
@@ -114,6 +119,12 @@ class VoxelSceneProperties(PropertyGroup):
                 ("ERASE", "Erase", "Erase brush is active"),
             ],
             default="NONE",
+        )
+        show_voxel_edges: BoolProperty(
+            name="Show Voxel Edges",
+            description="Draw exposed voxel cell boundaries while editing",
+            default=True,
+            update=_display_changed,
         )
 
 

@@ -10,6 +10,7 @@ Voxel Workspace is an installable Blender 5.1 extension for authoring independen
 - `.blend` persistence with continued editing after a separate-process reopen.
 - Multiple independent volume objects identified by Mesh UUID rather than object name.
 - Per-brick, depth-aware GPU preview on OpenGL and Vulkan.
+- Depth-aware voxel cell outlines keep adjacent same-color voxels readable while editing.
 - Committed palette mesh geometry rendered by both EEVEE and Cycles.
 
 Layers, selection, symmetry, `.vox` import/export, custom Workspace layouts, and other deferred tools are intentionally outside this vertical slice.
@@ -21,7 +22,7 @@ Layers, selection, symmetry, `.vox` import/export, custom Workspace layouts, and
 
 ## Install
 
-1. Download or build `voxel_workspace-0.1.2.zip`.
+1. Download or build `voxel_workspace-0.1.3.zip`.
 2. In Blender, open **Edit → Preferences → Get Extensions**.
 3. Use the repository menu and choose **Install from Disk…**.
 4. Select the ZIP and enable **Voxel Workspace** if Blender does not enable it automatically.
@@ -48,6 +49,8 @@ Open **3D Viewport → N-panel → Voxel**.
 5. Release LMB to commit the entire drag as one Undo step.
 6. Press **Esc while dragging** to cancel that drag, or **Esc while idle** to stop editing.
 7. MMB, wheel, numpad navigation, Ctrl+Z, and Ctrl+Shift+Z pass through to Blender.
+
+Use **Show Voxel Edges** in the Voxel Brush panel to toggle the editing outlines. This affects only the live editing preview, not EEVEE or Cycles renders.
 
 Only one volume is actively edited at a time. Object transforms are honored because picking and preview operate in object-local voxel space.
 

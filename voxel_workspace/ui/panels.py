@@ -97,6 +97,12 @@ class VOXEL_PT_main_panel(Panel):
         tool_name = context.scene.voxel_workspace.active_tool.title()
         tools_box.label(text=f"Voxel Brush  •  {tool_name}", icon='TOOL_SETTINGS')
         tools_col = tools_box.column(align=True)
+        tools_col.prop(
+            context.scene.voxel_workspace,
+            "show_voxel_edges",
+            text="Show Voxel Edges",
+        )
+        tools_col.separator(factor=0.5)
 
         # Start Place
         if hasattr(bpy.ops, "voxel") and hasattr(bpy.ops.voxel, "start_place"):
