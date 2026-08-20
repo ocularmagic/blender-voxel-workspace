@@ -11,16 +11,17 @@ PALETTE_IMAGE_NAME = "VoxelPalette"
 PALETTE_MATERIAL_NAME = "VoxelPaletteMaterial"
 PALETTE_ATTRIBUTE_NAME = "palette_index"
 
-# 256x1 palette lookup image. Indices 1..7 intentionally distinctive (spike003 MVP colors).
+# 256x1 lookup image; the current UI exposes the eight defined MVP colors.
 PALETTE_COLORS: List[Tuple[float, float, float, float]] = [
     (0.0, 0.0, 0.0, 1.0),      # 0: Empty / Background
-    (1.0, 0.03, 0.03, 1.0),    # 1: Red
-    (0.03, 1.0, 0.03, 1.0),    # 2: Green
-    (0.03, 0.15, 1.0, 1.0),    # 3: Blue
-    (1.0, 0.8, 0.03, 1.0),     # 4: Yellow
-    (0.8, 0.03, 1.0, 1.0),     # 5: Magenta
-    (0.03, 1.0, 1.0, 1.0),     # 6: Cyan
-    (1.0, 0.3, 0.03, 1.0),     # 7: Orange
+    (0.5, 0.5, 0.5, 1.0),      # 1: Neutral Gray (default)
+    (1.0, 0.03, 0.03, 1.0),    # 2: Red
+    (0.03, 1.0, 0.03, 1.0),    # 3: Green
+    (0.03, 0.15, 1.0, 1.0),    # 4: Blue
+    (1.0, 0.8, 0.03, 1.0),     # 5: Yellow
+    (0.8, 0.03, 1.0, 1.0),     # 6: Magenta
+    (0.03, 1.0, 1.0, 1.0),     # 7: Cyan
+    (1.0, 0.3, 0.03, 1.0),     # 8: Orange
 ]
 
 

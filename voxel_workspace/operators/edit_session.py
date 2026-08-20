@@ -58,6 +58,7 @@ class VOXEL_OT_start_place(Operator):
         vol_uuid = obj.data.voxel_workspace.uuid
         stop_editing(context)
         start_editing(vol_uuid, context)
+        context.scene.voxel_workspace.active_tool = 'PLACE'
 
         # Invoke modal brush with mode='PLACE'
         if hasattr(bpy.ops, "voxel") and hasattr(bpy.ops.voxel, "brush"):
@@ -94,6 +95,7 @@ class VOXEL_OT_start_erase(Operator):
         vol_uuid = obj.data.voxel_workspace.uuid
         stop_editing(context)
         start_editing(vol_uuid, context)
+        context.scene.voxel_workspace.active_tool = 'ERASE'
 
         # Invoke modal brush with mode='ERASE'
         if hasattr(bpy.ops, "voxel") and hasattr(bpy.ops.voxel, "brush"):

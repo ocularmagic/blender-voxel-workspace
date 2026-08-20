@@ -40,7 +40,7 @@ For development builds:
 Open **3D Viewport → N-panel → Voxel**.
 
 1. Click **Create Volume**. The operator defaults to 32×32×32 voxels at voxel size 1.0.
-2. Set **Active Index** to palette index 1–255.
+2. Choose one of the eight visible **Placement Color** swatches. Neutral Gray is the default.
 3. Select a voxel volume and click **Start Place** or **Start Erase**.
 4. Move the pointer to preview the target; drag with **LMB** to edit.
 5. Release LMB to commit the entire drag as one Undo step.

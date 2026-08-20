@@ -601,8 +601,12 @@ def stop_editing(context: Optional[Any] = None) -> None:
     from .runtime import get_active_volume_uuid, set_active_volume_uuid, tag_redraw_all_viewports
 
     active_uuid = get_active_volume_uuid()
+    ctx = context if context is not None else (bpy.context if bpy is not None else None)
+    if ctx is not None and getattr(ctx, "scene", None) is not None:
+        scene_props = getattr(ctx.scene, "voxel_workspace", None)
+        if scene_props is not None:
+            scene_props.active_tool = 'NONE'
     if active_uuid and bpy is not None:
-        ctx = context if context is not None else bpy.context
         if ctx is not None and hasattr(ctx, "scene") and hasattr(ctx.scene, "objects"):
             for obj in ctx.scene.objects:
                 if hasattr(obj, "voxel_workspace") and obj.voxel_workspace.is_editing:

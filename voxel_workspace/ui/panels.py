@@ -10,6 +10,7 @@ except ImportError:
     Panel = object
 
 from ..blender.runtime import get_volume
+from .palette_icons import PALETTE_NAMES
 
 
 class VOXEL_PT_main_panel(Panel):
@@ -73,17 +74,35 @@ class VOXEL_PT_main_panel(Panel):
         scene = context.scene
         if scene is not None and hasattr(scene, "voxel_workspace"):
             pal_box = layout.box()
-            pal_box.label(text="Palette", icon='COLOR')
-            pal_box.prop(scene.voxel_workspace, "active_palette_index", text="Active Index")
+            pal_box.label(text="Placement Color", icon='COLOR')
+            palette_props = scene.voxel_workspace
+            grid = pal_box.grid_flow(row_major=True, columns=4, even_columns=True, even_rows=True)
+            for index in range(1, 9):
+                button = grid.row(align=True)
+                button.scale_y = 1.6
+                button.prop_enum(
+                    palette_props,
+                    "active_palette_choice",
+                    str(index),
+                    text="",
+                )
+            active_index = int(palette_props.active_palette_choice)
+            pal_box.label(
+                text=f"Active: {PALETTE_NAMES[active_index]}  •  Index {active_index}",
+                icon='RADIOBUT_ON',
+            )
 
         # 4. Tool & Stroke Actions (Task 11 safe references)
         tools_box = layout.box()
-        tools_box.label(text="Tools", icon='TOOL_SETTINGS')
+        tool_name = context.scene.voxel_workspace.active_tool.title()
+        tools_box.label(text=f"Voxel Brush  •  {tool_name}", icon='TOOL_SETTINGS')
         tools_col = tools_box.column(align=True)
 
         # Start Place
         if hasattr(bpy.ops, "voxel") and hasattr(bpy.ops.voxel, "start_place"):
-            tools_col.operator("voxel.start_place", text="Start Place", icon='BRUSH_DATA')
+            button = tools_col.row(align=True)
+            button.scale_y = 1.4
+            button.operator("voxel.start_place", text="PLACE VOXELS", icon='BRUSH_DATA')
         else:
             row = tools_col.row()
             row.enabled = False
@@ -91,15 +110,18 @@ class VOXEL_PT_main_panel(Panel):
 
         # Start Erase
         if hasattr(bpy.ops, "voxel") and hasattr(bpy.ops.voxel, "start_erase"):
-            tools_col.operator("voxel.start_erase", text="Start Erase", icon='ERASER')
+            button = tools_col.row(align=True)
+            button.scale_y = 1.4
+            button.operator("voxel.start_erase", text="ERASE VOXELS", icon='REMOVE')
         else:
             row = tools_col.row()
             row.enabled = False
-            row.label(text="Start Erase", icon='ERASER')
+            row.label(text="Start Erase", icon='REMOVE')
 
         # Stop Editing
         if hasattr(bpy.ops, "voxel") and hasattr(bpy.ops.voxel, "stop_editing"):
-            tools_col.operator("voxel.stop_editing", text="Stop Editing", icon='CANCEL')
+            tools_col.separator(factor=0.5)
+            tools_col.operator("voxel.stop_editing", text="Stop Editing  (Esc)", icon='CANCEL')
         else:
             row = tools_col.row()
             row.enabled = False

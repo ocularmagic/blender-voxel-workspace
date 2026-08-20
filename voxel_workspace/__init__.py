@@ -11,6 +11,7 @@ from .blender.properties import register_properties, unregister_properties
 from .blender.runtime import register_runtime, unregister_runtime
 from .operators import OPERATOR_CLASSES
 from .ui import PANEL_CLASSES
+from .ui.palette_icons import register_palette_icons, unregister_palette_icons
 
 # Central ordered registry of Blender types
 CLASSES: List[Type] = [
@@ -32,6 +33,7 @@ def register() -> None:
     if _registered:
         return
 
+    register_palette_icons()
     register_properties()
     register_runtime()
 
@@ -60,5 +62,6 @@ def unregister() -> None:
 
     unregister_runtime()
     unregister_properties()
+    unregister_palette_icons()
 
     _registered = False

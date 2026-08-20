@@ -113,7 +113,10 @@ def compute_brush_target(
             )
             if not grid.in_extent(target):
                 target = clamp_to_extent(grid, target)
-            return target, hit.cell, hit.normal
+            # Preview the face on the *new* voxel that will contact the hit
+            # surface. This is the opposite normal on the target cell.
+            contact_normal = tuple(-component for component in hit.normal)
+            return target, target, contact_normal
         elif mode_upper == "ERASE":
             return hit.cell, hit.cell, hit.normal
 
@@ -123,7 +126,9 @@ def compute_brush_target(
         if cell is not None:
             if not grid.in_extent(cell):
                 cell = clamp_to_extent(grid, cell)
-            return cell, cell, (0, 0, 1)
+            # First-layer placement rests on the Z=0 work plane, so preview
+            # the future voxel's bottom face rather than its top face.
+            return cell, cell, (0, 0, -1)
 
     return None, None, None
 

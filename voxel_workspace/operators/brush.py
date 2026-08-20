@@ -324,6 +324,7 @@ class VOXEL_OT_brush(Operator):
                 return {'CANCELLED'}
 
         self.session = BrushSession(mode=self.mode, volume_uuid=active_uuid)
+        context.scene.voxel_workspace.active_tool = self.mode
         context.window_manager.modal_handler_add(self)
         tag_redraw_all_viewports()
         return {'RUNNING_MODAL'}

@@ -6,6 +6,7 @@ try:
     import bpy
     from bpy.props import (
         BoolProperty,
+        EnumProperty,
         FloatProperty,
         IntProperty,
         IntVectorProperty,
@@ -16,8 +17,17 @@ try:
 except ImportError:
     bpy = None
     PropertyGroup = object
-    BoolProperty = FloatProperty = IntProperty = IntVectorProperty = PointerProperty = StringProperty = None
+    BoolProperty = EnumProperty = FloatProperty = IntProperty = IntVectorProperty = PointerProperty = StringProperty = None
     Mesh = Object = None
+
+
+def _palette_items(self, context):
+    from ..ui.palette_icons import palette_enum_items
+    return palette_enum_items(self, context)
+
+
+def _palette_choice_changed(self, _context):
+    self.active_palette_index = int(self.active_palette_choice)
 
 
 class VoxelMeshProperties(PropertyGroup):
@@ -83,11 +93,27 @@ class VoxelSceneProperties(PropertyGroup):
     """Scene-level voxel interaction properties."""
     if bpy is not None:
         active_palette_index: IntProperty(
-            name="Palette Index",
-            description="Active palette color index for voxel placement",
+            name="Active Palette Index",
+            description="Stored color index used by the voxel brush",
             default=1,
             min=1,
-            max=255,
+            max=8,
+        )
+        active_palette_choice: EnumProperty(
+            name="Placement Color",
+            description="Choose the color for newly placed voxels",
+            items=_palette_items,
+            default=1,
+            update=_palette_choice_changed,
+        )
+        active_tool: EnumProperty(
+            name="Active Tool",
+            items=[
+                ("NONE", "None", "No voxel brush is active"),
+                ("PLACE", "Place", "Place brush is active"),
+                ("ERASE", "Erase", "Erase brush is active"),
+            ],
+            default="NONE",
         )
 
 
