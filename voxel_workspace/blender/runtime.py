@@ -72,6 +72,39 @@ def register_volume(
     return entry
 
 
+def invalidate_uuid(uuid_str: str) -> bool:
+    """Evict a volume entry from the runtime cache by UUID.
+    
+    Returns True if the volume was in cache and removed, False otherwise.
+    """
+    if uuid_str in _REGISTRY:
+        del _REGISTRY[uuid_str]
+        return True
+    return False
+
+
+def get_or_load(mesh: Any) -> Optional[VoxelVolumeEntry]:
+    """Retrieve runtime entry for a voxel mesh datablock, lazily deserializing if not cached."""
+    if mesh is None:
+        return None
+    mesh_data = getattr(mesh, "data", mesh)
+    if mesh_data is None or not hasattr(mesh_data, "voxel_workspace"):
+        return None
+    uuid_str = getattr(mesh_data.voxel_workspace, "uuid", None)
+    if not uuid_str:
+        return None
+
+    entry = _REGISTRY.get(uuid_str)
+    if entry is not None:
+        return entry
+
+    from voxel_workspace.blender.persistence import deserialize_volume
+    grid = deserialize_volume(mesh_data)
+    voxel_size = float(getattr(mesh_data.voxel_workspace, "voxel_size", 1.0))
+    entry = register_volume(uuid_str, grid=grid, voxel_size=voxel_size)
+    return entry
+
+
 def unregister_volume(uuid_str: str) -> None:
     """Remove a volume from the runtime cache."""
     global _ACTIVE_VOLUME_UUID
@@ -211,16 +244,35 @@ def on_save_pre(*args) -> None:
 
 @persistent
 def on_undo_post(*args) -> None:
-    """Post-undo handler: invalidate runtime cache and tag viewports for redraw.
+    """Post-undo handler: invalidate runtime cache, clear hover/GPU state, tag viewports.
     
     Guarded against reentrancy. Performs NO datablock writes and pushes NO undo steps.
+    Preserves active editing UUID when matching mesh still exists.
     """
-    global _UNDO_GUARD
+    global _UNDO_GUARD, _ACTIVE_VOLUME_UUID
     if _UNDO_GUARD:
         return
     _UNDO_GUARD = True
     try:
-        clear_registry()
+        # Preserve active editing UUID if matching mesh still exists
+        if _ACTIVE_VOLUME_UUID:
+            mesh_found = False
+            if bpy is not None and hasattr(bpy, "data") and hasattr(bpy.data, "meshes"):
+                for m in bpy.data.meshes:
+                    if hasattr(m, "voxel_workspace") and m.voxel_workspace.uuid == _ACTIVE_VOLUME_UUID:
+                        mesh_found = True
+                        break
+            if not mesh_found:
+                _ACTIVE_VOLUME_UUID = None
+
+        _REGISTRY.clear()
+
+        try:
+            from voxel_workspace.blender.gpu_preview import clear_hover_state
+            clear_hover_state()
+        except Exception:
+            pass
+
         tag_redraw_all_viewports()
     finally:
         _UNDO_GUARD = False
@@ -228,16 +280,35 @@ def on_undo_post(*args) -> None:
 
 @persistent
 def on_redo_post(*args) -> None:
-    """Post-redo handler: invalidate runtime cache and tag viewports for redraw.
+    """Post-redo handler: invalidate runtime cache, clear hover/GPU state, tag viewports.
     
     Guarded against reentrancy. Performs NO datablock writes and pushes NO undo steps.
+    Preserves active editing UUID when matching mesh still exists.
     """
-    global _UNDO_GUARD
+    global _UNDO_GUARD, _ACTIVE_VOLUME_UUID
     if _UNDO_GUARD:
         return
     _UNDO_GUARD = True
     try:
-        clear_registry()
+        # Preserve active editing UUID if matching mesh still exists
+        if _ACTIVE_VOLUME_UUID:
+            mesh_found = False
+            if bpy is not None and hasattr(bpy, "data") and hasattr(bpy.data, "meshes"):
+                for m in bpy.data.meshes:
+                    if hasattr(m, "voxel_workspace") and m.voxel_workspace.uuid == _ACTIVE_VOLUME_UUID:
+                        mesh_found = True
+                        break
+            if not mesh_found:
+                _ACTIVE_VOLUME_UUID = None
+
+        _REGISTRY.clear()
+
+        try:
+            from voxel_workspace.blender.gpu_preview import clear_hover_state
+            clear_hover_state()
+        except Exception:
+            pass
+
         tag_redraw_all_viewports()
     finally:
         _UNDO_GUARD = False

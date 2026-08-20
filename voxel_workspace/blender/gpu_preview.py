@@ -411,14 +411,10 @@ def _draw_callback() -> None:
     if bpy is None or gpu is None:
         return
 
-    from voxel_workspace.blender.runtime import get_active_volume_uuid, get_volume
+    from voxel_workspace.blender.runtime import get_active_volume_uuid, get_or_load
 
     active_uuid = get_active_volume_uuid()
     if not active_uuid:
-        return
-
-    entry = get_volume(active_uuid)
-    if entry is None:
         return
 
     context = bpy.context
@@ -445,6 +441,13 @@ def _draw_callback() -> None:
                     break
     if obj is None:
         return
+
+    entry = get_or_load(obj.data)
+    if entry is None:
+        return
+
+    if not entry.gpu_batches:
+        update_volume_gpu_preview(entry, dirty_only=False)
 
     try:
         flat_shader = gpu.shader.from_builtin('FLAT_COLOR')

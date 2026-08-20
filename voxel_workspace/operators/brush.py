@@ -23,6 +23,7 @@ from voxel_workspace.core.line import (
 from voxel_workspace.blender.runtime import (
     get_active_volume_uuid,
     get_volume,
+    get_or_load,
     tag_redraw_all_viewports,
 )
 from voxel_workspace.blender.gpu_preview import (
@@ -145,15 +146,19 @@ class BrushSession:
             self.cleanup()
             return {'FINISHED'}
 
-        entry = get_volume(self.volume_uuid)
         obj = context.active_object
         if (
-            entry is None
-            or obj is None
+            obj is None
             or not is_valid_voxel_object(obj)
             or obj.data.voxel_workspace.uuid != self.volume_uuid
         ):
-            self.cleanup(entry)
+            self.cleanup()
+            stop_editing(context)
+            return {'CANCELLED'}
+
+        entry = get_or_load(obj.data)
+        if entry is None:
+            self.cleanup()
             stop_editing(context)
             return {'CANCELLED'}
 
@@ -177,7 +182,12 @@ class BrushSession:
         }:
             return {'PASS_THROUGH'}
 
-        if event.ctrl and event.type in {'Z', 'Y'}:
+        if (event.ctrl or getattr(event, "oskey", False)) and event.type in {'Z', 'Y'}:
+            clear_hover_state()
+            if self.is_dragging and self.stroke is not None:
+                self.stroke = None
+            self.is_dragging = False
+            self.last_target = None
             return {'PASS_THROUGH'}
 
         # 3. Handle Escape Key (Cancel stroke or Exit session)
