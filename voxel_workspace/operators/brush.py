@@ -12,29 +12,29 @@ except ImportError:
     EnumProperty = None
     view3d_utils = None
 
-from voxel_workspace.constants import VoxelCoord
-from voxel_workspace.core.coords import split_coord
-from voxel_workspace.core.commands import VoxelStroke
-from voxel_workspace.core.line import (
+from ..constants import VoxelCoord
+from ..core.coords import split_coord
+from ..core.commands import VoxelStroke
+from ..core.line import (
     line_3d,
     compute_brush_target,
     world_ray_to_grid_ray,
 )
-from voxel_workspace.blender.runtime import (
+from ..blender.runtime import (
     get_active_volume_uuid,
     get_volume,
     get_or_load,
     tag_redraw_all_viewports,
 )
-from voxel_workspace.blender.gpu_preview import (
+from ..blender.gpu_preview import (
     set_hover_state,
     clear_hover_state,
     update_volume_gpu_preview,
     stop_editing,
 )
-from voxel_workspace.blender.persistence import serialize_volume
-from voxel_workspace.blender.mesh_sync import sync_volume_mesh
-from voxel_workspace.geometry.visible_faces import mesh_visible_faces
+from ..blender.persistence import serialize_volume
+from ..blender.mesh_sync import sync_volume_mesh
+from ..geometry.visible_faces import mesh_visible_faces
 
 
 def is_valid_voxel_object(obj: Any) -> bool:
@@ -316,7 +316,7 @@ class VOXEL_OT_brush(Operator):
         if not active_uuid:
             obj = context.active_object
             if is_valid_voxel_object(obj):
-                from voxel_workspace.blender.gpu_preview import start_editing
+                from ..blender.gpu_preview import start_editing
                 active_uuid = obj.data.voxel_workspace.uuid
                 start_editing(active_uuid, context)
             else:

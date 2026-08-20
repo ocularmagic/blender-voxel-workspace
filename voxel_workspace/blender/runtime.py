@@ -10,9 +10,9 @@ except ImportError:
     bpy = None
     persistent = lambda f: f
 
-from voxel_workspace.constants import BRICK_SIZE, BrickCoord
-from voxel_workspace.core.grid import VoxelGrid
-from voxel_workspace.geometry.buffers import MeshBuffers
+from ..constants import BRICK_SIZE, BrickCoord
+from ..core.grid import VoxelGrid
+from ..geometry.buffers import MeshBuffers
 
 
 @dataclass
@@ -98,7 +98,7 @@ def get_or_load(mesh: Any) -> Optional[VoxelVolumeEntry]:
     if entry is not None:
         return entry
 
-    from voxel_workspace.blender.persistence import deserialize_volume
+    from .persistence import deserialize_volume
     grid = deserialize_volume(mesh_data)
     voxel_size = float(getattr(mesh_data.voxel_workspace, "voxel_size", 1.0))
     entry = register_volume(uuid_str, grid=grid, voxel_size=voxel_size)
@@ -216,7 +216,7 @@ def on_depsgraph_update(scene, depsgraph) -> None:
 def on_load_post(*args) -> None:
     """File load handler: reset runtime cache across file opens."""
     try:
-        from voxel_workspace.blender.gpu_preview import cleanup_gpu_preview
+        from .gpu_preview import cleanup_gpu_preview
         cleanup_gpu_preview()
     except Exception:
         pass
@@ -228,7 +228,7 @@ def on_save_pre(*args) -> None:
     """Pre-save handler: flush dirty runtime grids to Mesh IDProperties."""
     if bpy is None or not hasattr(bpy, "data") or not hasattr(bpy.data, "meshes"):
         return
-    from voxel_workspace.blender.persistence import serialize_volume
+    from .persistence import serialize_volume
 
     mesh_by_uuid: Dict[str, Any] = {}
     for mesh in bpy.data.meshes:
@@ -268,7 +268,7 @@ def on_undo_post(*args) -> None:
         _REGISTRY.clear()
 
         try:
-            from voxel_workspace.blender.gpu_preview import clear_hover_state
+            from .gpu_preview import clear_hover_state
             clear_hover_state()
         except Exception:
             pass
@@ -304,7 +304,7 @@ def on_redo_post(*args) -> None:
         _REGISTRY.clear()
 
         try:
-            from voxel_workspace.blender.gpu_preview import clear_hover_state
+            from .gpu_preview import clear_hover_state
             clear_hover_state()
         except Exception:
             pass

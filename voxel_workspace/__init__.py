@@ -1,14 +1,16 @@
 """Voxel Workspace - Author bounded voxel volumes directly in Blender."""
 from typing import List, Type
+
+
 try:
     import bpy
 except ImportError:
     bpy = None
 
-from voxel_workspace.blender.properties import register_properties, unregister_properties
-from voxel_workspace.blender.runtime import register_runtime, unregister_runtime
-from voxel_workspace.operators import OPERATOR_CLASSES
-from voxel_workspace.ui import PANEL_CLASSES
+from .blender.properties import register_properties, unregister_properties
+from .blender.runtime import register_runtime, unregister_runtime
+from .operators import OPERATOR_CLASSES
+from .ui import PANEL_CLASSES
 
 # Central ordered registry of Blender types
 CLASSES: List[Type] = [
@@ -48,7 +50,7 @@ def unregister() -> None:
     # Draw handlers and saved viewport overlay state must be gone before
     # classes/properties disappear underneath their callbacks.
     try:
-        from voxel_workspace.blender.gpu_preview import cleanup_gpu_preview
+        from .blender.gpu_preview import cleanup_gpu_preview
         cleanup_gpu_preview()
     except Exception:
         pass

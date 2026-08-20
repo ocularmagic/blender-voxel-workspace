@@ -29,25 +29,29 @@ def get_or_create_palette_image() -> Any:
     if bpy is None:
         return None
 
-    if PALETTE_IMAGE_NAME in bpy.data.images:
-        img = bpy.data.images[PALETTE_IMAGE_NAME]
-        if img.size[0] == 256 and img.size[1] == 1:
-            return img
-
     pix = np.zeros((256, 4), dtype=np.float32)
     pix[:, 3] = 1.0
     for i, c in enumerate(PALETTE_COLORS):
         pix[i] = c
 
-    img = bpy.data.images.new(
-        PALETTE_IMAGE_NAME,
-        width=256,
-        height=1,
-        alpha=True,
-        float_buffer=False,
-    )
+    img = bpy.data.images.get(PALETTE_IMAGE_NAME)
+    if img is None or img.size[0] != 256 or img.size[1] != 1:
+        if img is not None:
+            bpy.data.images.remove(img)
+        img = bpy.data.images.new(
+            PALETTE_IMAGE_NAME,
+            width=256,
+            height=1,
+            alpha=True,
+            float_buffer=False,
+        )
     img.colorspace_settings.name = "Non-Color"
     img.pixels.foreach_set(pix.reshape(-1))
+    img.update()
+    # Generated image pixel edits are not reliably preserved by a .blend
+    # round-trip unless packed. The vertical slice must reopen and render
+    # palette colors without an external sidecar image.
+    img.pack()
     return img
 
 
@@ -60,9 +64,13 @@ def get_or_create_palette_material() -> Any:
     if bpy is None:
         return None
 
+    palette_image = get_or_create_palette_image()
     if PALETTE_MATERIAL_NAME in bpy.data.materials:
         mat = bpy.data.materials[PALETTE_MATERIAL_NAME]
         if mat.node_tree is not None and len(mat.node_tree.nodes) > 0:
+            for node in mat.node_tree.nodes:
+                if node.bl_idname == "ShaderNodeTexImage":
+                    node.image = palette_image
             return mat
     else:
         mat = bpy.data.materials.new(PALETTE_MATERIAL_NAME)
@@ -90,7 +98,7 @@ def get_or_create_palette_material() -> Any:
     comb.inputs["Y"].default_value = 0.5
 
     tex = nt.nodes.new("ShaderNodeTexImage")
-    tex.image = get_or_create_palette_image()
+    tex.image = palette_image
     tex.interpolation = "Closest"
     tex.extension = "EXTEND"
 

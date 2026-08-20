@@ -10,15 +10,15 @@ except ImportError:
     Operator = object
     IntProperty = FloatProperty = None
 
-from voxel_workspace.core.grid import VoxelGrid
-from voxel_workspace.blender.properties import (
+from ..core.grid import VoxelGrid
+from ..blender.properties import (
     init_voxel_mesh_properties,
     init_voxel_object_properties,
 )
-from voxel_workspace.blender.persistence import init_volume_storage
-from voxel_workspace.blender.materials import ensure_voxel_material
-from voxel_workspace.blender.mesh_sync import sync_volume_mesh
-from voxel_workspace.blender.runtime import register_volume
+from ..blender.persistence import init_volume_storage
+from ..blender.materials import ensure_voxel_material
+from ..blender.mesh_sync import sync_volume_mesh
+from ..blender.runtime import register_volume
 
 
 class VOXEL_OT_create_volume(Operator):

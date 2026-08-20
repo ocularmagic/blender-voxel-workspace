@@ -11,10 +11,10 @@ except ImportError:
     gpu = None
     batch_for_shader = None
 
-from voxel_workspace.constants import BrickCoord
-from voxel_workspace.geometry.buffers import MeshBuffers
-from voxel_workspace.geometry.visible_faces import mesh_visible_faces
-from voxel_workspace.blender.materials import PALETTE_COLORS
+from ..constants import BrickCoord
+from ..geometry.buffers import MeshBuffers
+from ..geometry.visible_faces import mesh_visible_faces
+from .materials import PALETTE_COLORS
 
 
 # Precomputed 256x4 float32 palette color table
@@ -411,7 +411,7 @@ def _draw_callback() -> None:
     if bpy is None or gpu is None:
         return
 
-    from voxel_workspace.blender.runtime import get_active_volume_uuid, get_or_load
+    from .runtime import get_active_volume_uuid, get_or_load
 
     active_uuid = get_active_volume_uuid()
     if not active_uuid:
@@ -565,13 +565,13 @@ def remove_draw_handler() -> bool:
 
 def is_editing_active() -> bool:
     """Return True if a voxel volume is currently actively being edited."""
-    from voxel_workspace.blender.runtime import get_active_volume_uuid
+    from .runtime import get_active_volume_uuid
     return get_active_volume_uuid() is not None
 
 
 def start_editing(volume_uuid: str, context: Optional[Any] = None) -> None:
     """Start editing session for a voxel volume: activate UUID, hide overlays, install handler."""
-    from voxel_workspace.blender.runtime import set_active_volume_uuid, get_volume, tag_redraw_all_viewports
+    from .runtime import set_active_volume_uuid, get_volume, tag_redraw_all_viewports
 
     set_active_volume_uuid(volume_uuid)
 
@@ -598,7 +598,7 @@ def start_editing(volume_uuid: str, context: Optional[Any] = None) -> None:
 
 def stop_editing(context: Optional[Any] = None) -> None:
     """Stop active editing session: restore overlays and deactivate editing state."""
-    from voxel_workspace.blender.runtime import get_active_volume_uuid, set_active_volume_uuid, tag_redraw_all_viewports
+    from .runtime import get_active_volume_uuid, set_active_volume_uuid, tag_redraw_all_viewports
 
     active_uuid = get_active_volume_uuid()
     if active_uuid and bpy is not None:

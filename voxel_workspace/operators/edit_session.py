@@ -8,12 +8,12 @@ except ImportError:
     bpy = None
     Operator = object
 
-from voxel_workspace.blender.gpu_preview import (
+from ..blender.gpu_preview import (
     start_editing,
     stop_editing,
     is_editing_active,
 )
-from voxel_workspace.blender.runtime import (
+from ..blender.runtime import (
     get_active_volume_uuid,
     has_volume,
     get_volume,

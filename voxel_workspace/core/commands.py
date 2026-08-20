@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 from typing import Dict, List, Set
 
-from voxel_workspace.constants import BRICK_SIZE, BrickCoord, VoxelCoord
-from voxel_workspace.core.coords import split_coord
-from voxel_workspace.core.grid import VoxelGrid
+from ..constants import BRICK_SIZE, BrickCoord, VoxelCoord
+from .coords import split_coord
+from .grid import VoxelGrid
 
 
 @dataclass

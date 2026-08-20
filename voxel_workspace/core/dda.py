@@ -7,8 +7,8 @@ import itertools
 import math
 from typing import Sequence
 
-from voxel_workspace.constants import VoxelCoord
-from voxel_workspace.core.grid import VoxelGrid
+from ..constants import VoxelCoord
+from .grid import VoxelGrid
 
 
 @dataclass(frozen=True)

@@ -1,5 +1,5 @@
 from typing import Tuple
-from voxel_workspace.constants import BRICK_SIZE, BrickCoord, VoxelCoord
+from ..constants import BRICK_SIZE, BrickCoord, VoxelCoord
 
 
 def split_coord(coord: VoxelCoord, brick_size: int = BRICK_SIZE) -> Tuple[BrickCoord, VoxelCoord]:

@@ -5,9 +5,9 @@ import math
 from typing import Any, Sequence
 import numpy as np
 
-from voxel_workspace.constants import VoxelCoord
-from voxel_workspace.core.grid import VoxelGrid
-from voxel_workspace.core.dda import trace_grid, intersect_work_plane
+from ..constants import VoxelCoord
+from .grid import VoxelGrid
+from .dda import trace_grid, intersect_work_plane
 
 
 def clamp_to_extent(grid: VoxelGrid, coord: VoxelCoord) -> VoxelCoord:

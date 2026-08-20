@@ -9,7 +9,7 @@ except ImportError:
     bpy = None
     Panel = object
 
-from voxel_workspace.blender.runtime import get_volume
+from ..blender.runtime import get_volume
 
 
 class VOXEL_PT_main_panel(Panel):

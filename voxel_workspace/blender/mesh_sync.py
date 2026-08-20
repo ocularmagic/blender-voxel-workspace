@@ -7,11 +7,11 @@ try:
 except ImportError:
     bpy = None
 
-from voxel_workspace.constants import BrickCoord
-from voxel_workspace.core.grid import VoxelGrid
-from voxel_workspace.geometry.buffers import MeshBuffers
-from voxel_workspace.geometry.greedy import mesh_greedy
-from voxel_workspace.blender.materials import ensure_voxel_material, PALETTE_ATTRIBUTE_NAME
+from ..constants import BrickCoord
+from ..core.grid import VoxelGrid
+from ..geometry.buffers import MeshBuffers
+from ..geometry.greedy import mesh_greedy
+from .materials import ensure_voxel_material, PALETTE_ATTRIBUTE_NAME
 
 
 def sync_volume_mesh(
@@ -44,14 +44,14 @@ def sync_volume_mesh(
         voxel_size = 1.0
 
     if entry is None and vol_uuid:
-        from voxel_workspace.blender.runtime import get_volume
+        from .runtime import get_volume
         entry = get_volume(vol_uuid)
 
     if grid is None:
         if entry is not None:
             grid = entry.grid
         else:
-            from voxel_workspace.blender.persistence import deserialize_volume
+            from .persistence import deserialize_volume
             grid = deserialize_volume(mesh)
 
     cpu_buffers: Dict[BrickCoord, MeshBuffers]

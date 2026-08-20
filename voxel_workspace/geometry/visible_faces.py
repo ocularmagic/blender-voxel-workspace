@@ -1,7 +1,7 @@
 from typing import Optional, Tuple
 import numpy as np
 
-from voxel_workspace.geometry.buffers import MeshBuffers
+from .buffers import MeshBuffers
 
 FACE_SPECS: list[Tuple[int, int, np.ndarray]] = [
     # (axis, sgn, quad_template_ccw_outward)

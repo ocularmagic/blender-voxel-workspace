@@ -24,8 +24,8 @@ try:
 except ImportError:
     bpy = None
 
-from voxel_workspace.constants import BRICK_SIZE, BrickCoord
-from voxel_workspace.core.grid import VoxelGrid
+from ..constants import BRICK_SIZE, BrickCoord
+from ..core.grid import VoxelGrid
 
 
 SCHEMA_VERSION = 1
@@ -222,7 +222,7 @@ def commit_volume_state(
 
     vol_uuid = mesh.voxel_workspace.uuid
     if grid is None:
-        from voxel_workspace.blender.runtime import get_volume
+        from .runtime import get_volume
         entry = get_volume(vol_uuid) if vol_uuid else None
         if entry is not None:
             grid = entry.grid
@@ -236,7 +236,7 @@ def commit_volume_state(
         if mesh_sync_callback is not None:
             mesh_sync_callback(mesh, grid)
         else:
-            from voxel_workspace.blender.mesh_sync import sync_volume_mesh
+            from .mesh_sync import sync_volume_mesh
             sync_volume_mesh(mesh, grid=grid, dirty_only=True, dirty_bricks=dirty_coords)
 
     if push_undo and bpy is not None and hasattr(bpy, "ops") and hasattr(bpy.ops, "ed"):

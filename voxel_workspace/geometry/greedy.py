@@ -1,7 +1,7 @@
 from typing import Iterator, Optional, Tuple
 import numpy as np
 
-from voxel_workspace.geometry.buffers import MeshBuffers
+from .buffers import MeshBuffers
 
 
 def _greedy_rectangles(mask: np.ndarray) -> Iterator[Tuple[int, int, int, int, int]]:

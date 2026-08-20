@@ -1,5 +1,5 @@
 """Blender integration, properties, runtime cache, and materials."""
-from voxel_workspace.blender.properties import (
+from .properties import (
     VoxelMeshProperties,
     VoxelObjectProperties,
     init_voxel_mesh_properties,
@@ -8,7 +8,7 @@ from voxel_workspace.blender.properties import (
     register_properties,
     unregister_properties,
 )
-from voxel_workspace.blender.persistence import (
+from .persistence import (
     SCHEMA_VERSION,
     pack_bytes_to_i32,
     unpack_i32_to_bytes,
@@ -21,7 +21,7 @@ from voxel_workspace.blender.persistence import (
     commit_volume_state,
     init_volume_storage,
 )
-from voxel_workspace.blender.runtime import (
+from .runtime import (
     VoxelVolumeEntry,
     register_volume,
     unregister_volume,
@@ -45,7 +45,7 @@ from voxel_workspace.blender.runtime import (
     unregister_runtime,
 )
 
-from voxel_workspace.blender.materials import (
+from .materials import (
     PALETTE_COLORS,
     PALETTE_IMAGE_NAME,
     PALETTE_MATERIAL_NAME,
@@ -54,7 +54,7 @@ from voxel_workspace.blender.materials import (
     get_or_create_palette_material,
     ensure_voxel_material,
 )
-from voxel_workspace.blender.mesh_sync import (
+from .mesh_sync import (
     sync_volume_mesh,
 )
 

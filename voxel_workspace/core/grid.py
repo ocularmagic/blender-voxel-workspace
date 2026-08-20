@@ -1,8 +1,8 @@
 from typing import Dict, Set, Tuple, Optional
 import numpy as np
 
-from voxel_workspace.constants import BRICK_SIZE, EMPTY, BrickCoord, VoxelCoord
-from voxel_workspace.core.coords import split_coord
+from ..constants import BRICK_SIZE, EMPTY, BrickCoord, VoxelCoord
+from .coords import split_coord
 
 
 class VoxelGrid:
