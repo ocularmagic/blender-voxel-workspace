@@ -7,9 +7,14 @@ except ImportError:
 
 from voxel_workspace.blender.properties import register_properties, unregister_properties
 from voxel_workspace.blender.runtime import register_runtime, unregister_runtime
+from voxel_workspace.operators import OPERATOR_CLASSES
+from voxel_workspace.ui import PANEL_CLASSES
 
 # Central ordered registry of Blender types
-CLASSES: List[Type] = []
+CLASSES: List[Type] = [
+    *OPERATOR_CLASSES,
+    *PANEL_CLASSES,
+]
 
 _registered: bool = False
 

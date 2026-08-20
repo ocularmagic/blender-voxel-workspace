@@ -79,6 +79,18 @@ class VoxelObjectProperties(PropertyGroup):
         )
 
 
+class VoxelSceneProperties(PropertyGroup):
+    """Scene-level voxel interaction properties."""
+    if bpy is not None:
+        active_palette_index: IntProperty(
+            name="Palette Index",
+            description="Active palette color index for voxel placement",
+            default=1,
+            min=1,
+            max=255,
+        )
+
+
 def init_voxel_mesh_properties(
     mesh: "bpy.types.Mesh",
     uuid_str: Optional[str] = None,
@@ -129,6 +141,7 @@ def get_volume_uuid(target: Union["bpy.types.Mesh", "bpy.types.Object", None]) -
 PROPERTY_CLASSES = [
     VoxelMeshProperties,
     VoxelObjectProperties,
+    VoxelSceneProperties,
 ]
 
 
@@ -139,6 +152,7 @@ def register_properties() -> None:
         bpy.utils.register_class(cls)
     bpy.types.Mesh.voxel_workspace = PointerProperty(type=VoxelMeshProperties)
     bpy.types.Object.voxel_workspace = PointerProperty(type=VoxelObjectProperties)
+    bpy.types.Scene.voxel_workspace = PointerProperty(type=VoxelSceneProperties)
 
 
 def unregister_properties() -> None:
@@ -148,5 +162,7 @@ def unregister_properties() -> None:
         del bpy.types.Mesh.voxel_workspace
     if hasattr(bpy.types.Object, "voxel_workspace"):
         del bpy.types.Object.voxel_workspace
+    if hasattr(bpy.types.Scene, "voxel_workspace"):
+        del bpy.types.Scene.voxel_workspace
     for cls in reversed(PROPERTY_CLASSES):
         bpy.utils.unregister_class(cls)
