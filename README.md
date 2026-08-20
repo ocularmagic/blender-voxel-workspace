@@ -21,7 +21,7 @@ Layers, selection, symmetry, `.vox` import/export, custom Workspace layouts, and
 
 ## Install
 
-1. Download or build `voxel_workspace-0.1.0.zip`.
+1. Download or build `voxel_workspace-0.1.2.zip`.
 2. In Blender, open **Edit → Preferences → Get Extensions**.
 3. Use the repository menu and choose **Install from Disk…**.
 4. Select the ZIP and enable **Voxel Workspace** if Blender does not enable it automatically.
@@ -42,7 +42,9 @@ Open **3D Viewport → N-panel → Voxel**.
 1. Click **Create Volume**. The operator defaults to 32×32×32 voxels at voxel size 1.0.
 2. Choose one of the eight visible **Placement Color** swatches. Neutral Gray is the default.
 3. Select a voxel volume and click **Start Place** or **Start Erase**.
+   The color swatches remain clickable while either tool is active, so you do not need to exit editing to change colors.
 4. Move the pointer to preview the target; drag with **LMB** to edit.
+   Each drag targets the surface that existed when the drag began, preventing newly placed voxels from stacking toward the camera.
 5. Release LMB to commit the entire drag as one Undo step.
 6. Press **Esc while dragging** to cancel that drag, or **Esc while idle** to stop editing.
 7. MMB, wheel, numpad navigation, Ctrl+Z, and Ctrl+Shift+Z pass through to Blender.

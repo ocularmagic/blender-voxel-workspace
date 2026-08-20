@@ -1,6 +1,6 @@
 [project]
 name = "voxel-workspace"
-version = "0.1.1"
+version = "0.1.2"
 description = "A Blender 5.1 extension for authoring bounded voxel volumes"
 readme = "README.md"
 requires-python = ">=3.11"

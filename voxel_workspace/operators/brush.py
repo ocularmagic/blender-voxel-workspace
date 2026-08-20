@@ -37,6 +37,18 @@ from ..blender.mesh_sync import sync_volume_mesh
 from ..geometry.visible_faces import mesh_visible_faces
 
 
+def snapshot_grid(grid):
+    """Copy cells used for stable Place picking during one stroke."""
+    from ..core.grid import VoxelGrid
+    snapshot = VoxelGrid(
+        extent_min=grid.extent_min,
+        extent_max_exclusive=grid.extent_max_exclusive,
+        brick_size=grid.brick_size,
+    )
+    snapshot.bricks = {coord: brick.copy() for coord, brick in grid.bricks.items()}
+    return snapshot
+
+
 def is_valid_voxel_object(obj: Any) -> bool:
     """Check if an object is a valid voxel volume mesh datablock."""
     return bool(
@@ -59,11 +71,30 @@ class BrushSession:
         self.is_dragging: bool = False
         self.stroke: Optional[VoxelStroke] = None
         self.last_target: Optional[VoxelCoord] = None
+        self.pick_grid = None
 
     def resolve_view3d_region(
         self, context: Any, event: Any
     ) -> Tuple[Optional[Any], Optional[Any], int, int]:
         """Find the VIEW_3D WINDOW region and rv3d corresponding to the mouse event."""
+        # VIEW_3D sidebars/toolbars overlap the WINDOW region in screen
+        # coordinates. Reject those visible UI regions first so their clicks
+        # can pass through to Blender controls such as palette swatches.
+        if context.screen is not None:
+            mouse_x = getattr(event, "mouse_x", -1)
+            mouse_y = getattr(event, "mouse_y", -1)
+            for area in context.screen.areas:
+                if area.type != 'VIEW_3D':
+                    continue
+                for ui_region in area.regions:
+                    if ui_region.type == 'WINDOW' or ui_region.width <= 1 or ui_region.height <= 1:
+                        continue
+                    if (
+                        ui_region.x <= mouse_x < ui_region.x + ui_region.width
+                        and ui_region.y <= mouse_y < ui_region.y + ui_region.height
+                    ):
+                        return None, None, 0, 0
+
         # 1. Direct match on context
         if (
             context.area is not None
@@ -72,7 +103,11 @@ class BrushSession:
             and context.region.type == 'WINDOW'
             and context.region_data is not None
         ):
-            return context.region, context.region_data, event.mouse_region_x, event.mouse_region_y
+            rx, ry = event.mouse_region_x, event.mouse_region_y
+            if (
+                0 <= rx < context.region.width and 0 <= ry < context.region.height
+            ) or (bpy is not None and bpy.app.background):
+                return context.region, context.region_data, rx, ry
 
         # 2. Window coordinate search across VIEW_3D areas
         if context.screen is not None:
@@ -86,8 +121,10 @@ class BrushSession:
                                 rv3d = getattr(area.spaces.active, "region_3d", context.region_data)
                                 return r, rv3d, rx, ry
 
-        # 3. Fallback to first VIEW_3D region clamped
-        if context.screen is not None:
+        # Background integration harnesses do not refresh RegionView3D
+        # projection matrices like the foreground event loop. Keep their
+        # historical clamped fallback without exposing it in the real UI.
+        if bpy is not None and bpy.app.background and context.screen is not None:
             for area in context.screen.areas:
                 if area.type == 'VIEW_3D':
                     for r in area.regions:
@@ -119,9 +156,8 @@ class BrushSession:
             origin_grid, dir_grid = world_ray_to_grid_ray(
                 origin_world, dir_world, obj.matrix_world, voxel_size=entry.voxel_size
             )
-            return compute_brush_target(
-                entry.grid, origin_grid, dir_grid, mode=self.mode
-            )
+            picking_grid = self.pick_grid if self.mode == 'PLACE' and self.pick_grid is not None else entry.grid
+            return compute_brush_target(picking_grid, origin_grid, dir_grid, mode=self.mode)
         except Exception:
             return None, None, None
 
@@ -133,6 +169,7 @@ class BrushSession:
         self.is_dragging = False
         self.stroke = None
         self.last_target = None
+        self.pick_grid = None
         clear_hover_state()
 
     def handle_event(self, context: Any, event: Any) -> set:
@@ -188,6 +225,7 @@ class BrushSession:
                 self.stroke = None
             self.is_dragging = False
             self.last_target = None
+            self.pick_grid = None
             return {'PASS_THROUGH'}
 
         # 3. Handle Escape Key (Cancel stroke or Exit session)
@@ -199,6 +237,7 @@ class BrushSession:
                 self.stroke = None
                 self.is_dragging = False
                 self.last_target = None
+                self.pick_grid = None
                 tag_redraw_all_viewports()
                 return {'RUNNING_MODAL'}
             else:
@@ -207,6 +246,18 @@ class BrushSession:
                 stop_editing(context)
                 return {'FINISHED'}
 
+        # Sidebar and other UI events must remain available while editing.
+        if event.type == 'LEFTMOUSE' and (
+            event.value == 'PRESS' or not self.is_dragging
+        ):
+            region, _rv3d, _rx, _ry = self.resolve_view3d_region(context, event)
+            if region is None:
+                return {'PASS_THROUGH'}
+        if event.type == 'MOUSEMOVE':
+            region, _rv3d, _rx, _ry = self.resolve_view3d_region(context, event)
+            if region is None:
+                return {'PASS_THROUGH'}
+
         # Calculate target for current mouse position
         target_cell, hover_cell, hover_normal = self.get_brush_target(context, event, entry, obj)
 
@@ -214,6 +265,7 @@ class BrushSession:
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             self.is_dragging = True
             self.stroke = VoxelStroke(brick_size=entry.grid.brick_size)
+            self.pick_grid = snapshot_grid(entry.grid) if self.mode == 'PLACE' else None
             val = getattr(context.scene.voxel_workspace, "active_palette_index", 1) if self.mode == 'PLACE' else 0
             if target_cell is not None:
                 self.stroke.record(entry.grid, target_cell, val)
@@ -273,6 +325,7 @@ class BrushSession:
                     except Exception:
                         pass
             self.stroke = None
+            self.pick_grid = None
             update_volume_gpu_preview(entry, dirty_only=False)
             tag_redraw_all_viewports()
             return {'RUNNING_MODAL'}
@@ -295,7 +348,8 @@ class VOXEL_OT_brush(Operator):
     bl_idname = "voxel.brush"
     bl_label = "Voxel Brush"
     bl_description = "Interactive modal voxel brush tool"
-    bl_options = {'BLOCKING'}
+    # Non-blocking so palette swatches and other sidebar controls remain live.
+    bl_options = set()
 
     if bpy is not None:
         mode: EnumProperty(
