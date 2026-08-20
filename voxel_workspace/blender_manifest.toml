@@ -1,0 +1,9 @@
+schema_version = "1.0.0"
+id = "voxel_workspace"
+version = "0.1.0"
+name = "Voxel Workspace"
+tagline = "Author bounded voxel volumes directly in Blender"
+maintainer = "Voxel Workspace contributors"
+type = "add-on"
+blender_version_min = "5.1.0"
+license = ["SPDX:GPL-3.0-or-later"]
