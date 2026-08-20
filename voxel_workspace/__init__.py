@@ -45,6 +45,14 @@ def unregister() -> None:
     if not _registered:
         return
 
+    # Draw handlers and saved viewport overlay state must be gone before
+    # classes/properties disappear underneath their callbacks.
+    try:
+        from voxel_workspace.blender.gpu_preview import cleanup_gpu_preview
+        cleanup_gpu_preview()
+    except Exception:
+        pass
+
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)
 

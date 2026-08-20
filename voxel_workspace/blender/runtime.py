@@ -182,6 +182,11 @@ def on_depsgraph_update(scene, depsgraph) -> None:
 @persistent
 def on_load_post(*args) -> None:
     """File load handler: reset runtime cache across file opens."""
+    try:
+        from voxel_workspace.blender.gpu_preview import cleanup_gpu_preview
+        cleanup_gpu_preview()
+    except Exception:
+        pass
     clear_registry()
 
 
