@@ -1,0 +1,10 @@
+.venv/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+dist/
+*.blend1
+tests/output/
+tests/blender/user_config/
+tests/blender/user_scripts/
+tests/blender/user_datafiles/
