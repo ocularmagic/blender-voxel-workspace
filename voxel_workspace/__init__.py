@@ -1,6 +1,9 @@
 """Voxel Workspace - Author bounded voxel volumes directly in Blender."""
 from typing import List, Type
-import bpy
+try:
+    import bpy
+except ImportError:
+    bpy = None
 
 # Central ordered registry of Blender types
 CLASSES: List[Type] = []
