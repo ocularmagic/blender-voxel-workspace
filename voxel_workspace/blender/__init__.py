@@ -43,6 +43,19 @@ from voxel_workspace.blender.runtime import (
     unregister_runtime,
 )
 
+from voxel_workspace.blender.materials import (
+    PALETTE_COLORS,
+    PALETTE_IMAGE_NAME,
+    PALETTE_MATERIAL_NAME,
+    PALETTE_ATTRIBUTE_NAME,
+    get_or_create_palette_image,
+    get_or_create_palette_material,
+    ensure_voxel_material,
+)
+from voxel_workspace.blender.mesh_sync import (
+    sync_volume_mesh,
+)
+
 __all__ = [
     "SCHEMA_VERSION",
     "pack_bytes_to_i32",
@@ -76,4 +89,12 @@ __all__ = [
     "cleanup_stale_volumes",
     "register_runtime",
     "unregister_runtime",
+    "PALETTE_COLORS",
+    "PALETTE_IMAGE_NAME",
+    "PALETTE_MATERIAL_NAME",
+    "PALETTE_ATTRIBUTE_NAME",
+    "get_or_create_palette_image",
+    "get_or_create_palette_material",
+    "ensure_voxel_material",
+    "sync_volume_mesh",
 ]

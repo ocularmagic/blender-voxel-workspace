@@ -229,10 +229,15 @@ def commit_volume_state(
         else:
             grid = deserialize_volume(mesh)
 
+    dirty_coords = set(grid.dirty_bricks)
     serialize_volume(mesh, grid, dirty_only=True)
 
-    if sync_mesh and mesh_sync_callback is not None:
-        mesh_sync_callback(mesh, grid)
+    if sync_mesh:
+        if mesh_sync_callback is not None:
+            mesh_sync_callback(mesh, grid)
+        else:
+            from voxel_workspace.blender.mesh_sync import sync_volume_mesh
+            sync_volume_mesh(mesh, grid=grid, dirty_only=True, dirty_bricks=dirty_coords)
 
     if push_undo and bpy is not None and hasattr(bpy, "ops") and hasattr(bpy.ops, "ed"):
         try:
