@@ -237,23 +237,25 @@ def on_depsgraph_update(scene, depsgraph) -> None:
 
 
 def reconcile_all_palette_caches(pack_images: bool = False) -> None:
-    """Rebuild palette images and LUTs from authoritative Mesh properties for all voxel meshes."""
+    """Reconcile native material domain bindings, slots, and GPU preview LUTs for all voxel meshes."""
     if bpy is None or not hasattr(bpy, "data") or not hasattr(bpy.data, "meshes"):
         return
-    from .materials import (
-        ensure_voxel_material,
-        refresh_palette_image,
-    )
-    from .properties import ensure_palette
+    from .properties import ensure_palette, migrate_native_material_domains
+    from .material_domains import reconcile_surface_slots
     from .gpu_preview import drop_palette_lut
 
     for mesh in bpy.data.meshes:
         if hasattr(mesh, "voxel_workspace") and mesh.voxel_workspace.is_voxel_mesh:
             if len(mesh.voxel_workspace.palette) == 0:
                 ensure_palette(mesh)
-            ensure_voxel_material(mesh, pack_image=pack_images)
-            if not pack_images:
-                refresh_palette_image(mesh)
+            migrate_native_material_domains(mesh)
+            
+            # Reconcile primary surface slots if runtime volume exists
+            vol_uuid = mesh.voxel_workspace.uuid
+            entry = get_volume(vol_uuid)
+            if entry is not None and entry.grid is not None:
+                reconcile_surface_slots(mesh, entry.grid)
+
             drop_palette_lut(mesh.voxel_workspace.uuid)
 
     tag_redraw_all_viewports()

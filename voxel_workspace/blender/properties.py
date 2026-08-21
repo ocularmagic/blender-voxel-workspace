@@ -260,14 +260,38 @@ class VoxelSceneProperties(PropertyGroup):
         )
 
 
+def migrate_native_material_domains(mesh: Any) -> bool:
+    """Migrate a schema-1 voxel mesh to schema-2 native material domain bindings.
+    
+    Creates owned native surface materials for all palette entries with palette display
+    colors, Roughness 1.0, Emission 0, and domain SURFACE. Idempotent.
+    """
+    if bpy is None or mesh is None or not hasattr(mesh, "voxel_workspace"):
+        return False
+
+    props = mesh.voxel_workspace
+    if props.palette_schema_version >= 2:
+        return False
+
+    from .material_domains import create_default_surface_material
+    for entry in props.palette:
+        if entry.index > 0:
+            if not getattr(entry, "material_domain", None):
+                entry.material_domain = "SURFACE"
+            if entry.material is None:
+                entry.material = create_default_surface_material(mesh, entry)
+                entry.material_owned = True
+
+    props.palette_schema_version = 2
+    return True
+
+
 def ensure_palette(mesh: Any) -> None:
     """Ensure the mesh palette collection contains index 0 and default colors 1-8 if empty.
     
     Idempotent and never pushes undo. Old .blend files or new volumes receive
     the defaults without altering voxel indices.
     """
-    if mesh is None or not hasattr(mesh, "voxel_workspace"):
-        return
     props = mesh.voxel_workspace
     if not hasattr(props, "palette"):
         return
