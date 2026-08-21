@@ -105,9 +105,12 @@ class VOXEL_PT_main_panel(Panel):
                 props = mesh.voxel_workspace
                 counts = get_used_palette_counts(mesh)
 
-                # Filter row: All / Used
-                filter_row = pal_box.row(align=True)
-                filter_row.prop(palette_props, "palette_filter", expand=True)
+                # Filter and Preset Tools Row
+                top_row = pal_box.row(align=True)
+                top_row.prop(palette_props, "palette_filter", expand=True)
+                preset_sub = top_row.row(align=True)
+                preset_sub.operator("voxel.load_palette_preset", text="Load Preset", icon='IMPORT')
+                preset_sub.operator("voxel.save_palette_preset", text="Save Preset", icon='EXPORT')
 
                 # Collect non-zero entries sorted by index
                 all_entries = sorted([e for e in props.palette if e.index > 0], key=lambda e: e.index)

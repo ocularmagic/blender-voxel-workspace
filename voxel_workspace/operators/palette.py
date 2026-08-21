@@ -1,4 +1,5 @@
 """Operators for volume palette management: select, edit, add, duplicate, and remove/remap."""
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 import numpy as np
 
@@ -11,8 +12,17 @@ except ImportError:
     Operator = object
     EnumProperty = FloatVectorProperty = IntProperty = StringProperty = None
 
-from ..constants import BrickCoord
+from ..constants import BrickCoord, DEFAULT_PALETTE
 from ..core.coords import split_coord
+from ..core.presets import (
+    PalettePreset,
+    PalettePresetEntry,
+    PRESET_SCHEMA_VERSION,
+    rgba_linear_to_srgb_bytes,
+    rgba_srgb_bytes_to_linear,
+    find_nearest_palette_index,
+    BUILTIN_PRESETS,
+)
 from ..blender.runtime import get_volume, get_or_load, tag_redraw_all_viewports
 from ..blender.persistence import serialize_volume, commit_volume_state
 from ..blender.materials import refresh_palette_image, ensure_voxel_material
@@ -628,6 +638,293 @@ class VOXEL_OT_compact_palette(Operator):
         return {'FINISHED'}
 
 
+class VOXEL_OT_save_palette_preset(Operator):
+    """Save the active volume's palette to a JSON preset file."""
+    bl_idname = "voxel.save_palette_preset"
+    bl_label = "Save Palette Preset"
+    bl_description = "Save the active volume's palette as a JSON preset file"
+    bl_options = {'REGISTER'}
+
+    if bpy is not None:
+        filepath: StringProperty(
+            name="File Path",
+            description="Destination JSON file path",
+            subtype='FILE_PATH',
+            default="",
+        )
+        preset_name: StringProperty(
+            name="Preset Name",
+            description="Name for the palette preset",
+            default="My Palette",
+        )
+
+    def invoke(self, context, event):
+        obj = context.active_object
+        if obj is None or obj.type != 'MESH' or not hasattr(obj.data, "voxel_workspace"):
+            self.report({'WARNING'}, "No active voxel volume")
+            return {'CANCELLED'}
+        if not self.preset_name or self.preset_name == "My Palette":
+            self.preset_name = f"{obj.name} Palette"
+        if not self.filepath:
+            import tempfile
+            self.filepath = str(Path(tempfile.gettempdir()) / f"{self.preset_name.replace(' ', '_').lower()}.json")
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        obj = context.active_object
+        if obj is None or obj.type != 'MESH' or not hasattr(obj.data, "voxel_workspace"):
+            self.report({'WARNING'}, "No active voxel volume")
+            return {'CANCELLED'}
+
+        if not self.filepath:
+            self.report({'ERROR'}, "No destination file path specified")
+            return {'CANCELLED'}
+
+        mesh = obj.data
+        props = mesh.voxel_workspace
+        color_entries = []
+
+        for entry in sorted([e for e in props.palette if e.index > 0], key=lambda e: e.index):
+            color_entries.append(
+                PalettePresetEntry(
+                    name=entry.name,
+                    color_srgb=rgba_linear_to_srgb_bytes(tuple(entry.color)),
+                )
+            )
+
+        preset = PalettePreset(
+            name=self.preset_name or "Custom Preset",
+            schema_version=PRESET_SCHEMA_VERSION,
+            color_space="sRGB",
+            colors=color_entries,
+        )
+
+        try:
+            preset.save_to_file(self.filepath)
+            self.report({'INFO'}, f"Saved palette preset ({len(color_entries)} colors) to {self.filepath}")
+        except Exception as exc:
+            self.report({'ERROR'}, f"Failed to save preset: {exc}")
+            return {'CANCELLED'}
+
+        return {'FINISHED'}
+
+
+def _builtin_preset_enum_items(_self, _context):
+    items = []
+    for idx, name in enumerate(BUILTIN_PRESETS):
+        items.append((name, name, f"Load built-in {name} preset", idx))
+    items.append(("FILE", "From JSON File...", "Load a preset from an external JSON file", len(BUILTIN_PRESETS)))
+    return items
+
+
+class VOXEL_OT_load_palette_preset(Operator):
+    """Load a palette preset onto the active volume with append or remap mode."""
+    bl_idname = "voxel.load_palette_preset"
+    bl_label = "Load Palette Preset"
+    bl_description = "Load a palette preset (built-in or from JSON file) onto the active volume"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    if bpy is not None:
+        preset_source: EnumProperty(
+            name="Preset",
+            description="Choose a built-in preset or load from file",
+            items=_builtin_preset_enum_items,
+        )
+        filepath: StringProperty(
+            name="File Path",
+            description="JSON preset file path (when source is FILE)",
+            subtype='FILE_PATH',
+            default="",
+        )
+        import_mode: EnumProperty(
+            name="Import Mode",
+            description="How to handle existing volume colors",
+            items=[
+                ("REPLACE", "Replace", "Replace palette values starting at index 1 (best for empty volumes)"),
+                ("APPEND", "Append Unused", "Keep existing voxel indices; add only preset colors not already present"),
+                ("REMAP", "Remap to Nearest", "Recolor existing voxels to the nearest matching preset color"),
+            ],
+            default="APPEND",
+        )
+
+    def invoke(self, context, event):
+        obj = context.active_object
+        if obj is None or obj.type != 'MESH' or not hasattr(obj.data, "voxel_workspace"):
+            self.report({'WARNING'}, "No active voxel volume")
+            return {'CANCELLED'}
+
+        counts = get_used_palette_counts(obj.data)
+        has_used_voxels = bool(counts)
+        # For empty volumes, default to REPLACE; for used volumes, default to APPEND
+        self.import_mode = "APPEND" if has_used_voxels else "REPLACE"
+
+        return context.window_manager.invoke_props_dialog(self)
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.active_object
+        counts = get_used_palette_counts(obj.data) if (obj and obj.type == 'MESH') else {}
+        has_used_voxels = bool(counts)
+
+        layout.prop(self, "preset_source")
+        if self.preset_source == "FILE":
+            layout.prop(self, "filepath")
+
+        if has_used_voxels:
+            layout.label(text=f"Volume has {sum(counts.values())} voxels in use.", icon='INFO')
+            layout.prop(self, "import_mode", text="Mode")
+            if self.import_mode == "REPLACE":
+                layout.label(text="Warning: Indices will be overwritten in-place!", icon='ERROR')
+        else:
+            layout.label(text="Volume is empty. Palette will be loaded starting at index 1.")
+
+    def execute(self, context):
+        obj = context.active_object
+        if obj is None or obj.type != 'MESH' or not hasattr(obj.data, "voxel_workspace"):
+            self.report({'WARNING'}, "No active voxel volume")
+            return {'CANCELLED'}
+
+        # 1. Resolve preset
+        if self.preset_source == "FILE":
+            if not self.filepath or not Path(self.filepath).exists():
+                self.report({'ERROR'}, f"Preset file not found: {self.filepath}")
+                return {'CANCELLED'}
+            try:
+                preset = PalettePreset.from_file(self.filepath)
+            except Exception as exc:
+                self.report({'ERROR'}, f"Failed to parse preset file: {exc}")
+                return {'CANCELLED'}
+        else:
+            if self.preset_source not in BUILTIN_PRESETS:
+                self.report({'ERROR'}, f"Unknown built-in preset: {self.preset_source}")
+                return {'CANCELLED'}
+            preset = BUILTIN_PRESETS[self.preset_source]
+
+        if not preset.colors:
+            self.report({'WARNING'}, "Preset contains no colors")
+            return {'CANCELLED'}
+
+        mesh = obj.data
+        props = mesh.voxel_workspace
+        from ..blender.properties import ensure_palette
+        if len(props.palette) == 0:
+            ensure_palette(mesh)
+
+        counts = get_used_palette_counts(mesh)
+        has_used_voxels = bool(counts)
+        mode = self.import_mode if has_used_voxels else "REPLACE"
+
+        # Convert preset colors to linear RGBA
+        preset_linear_entries = []
+        for c in preset.colors:
+            lin_rgba = rgba_srgb_bytes_to_linear(c.color_srgb)
+            preset_linear_entries.append((c.name, lin_rgba))
+
+        if mode == "REPLACE":
+            # Clear all non-zero entries and assign preset colors starting at index 1
+            props.palette.clear()
+            # Index 0 empty
+            empty_item = props.palette.add()
+            empty_item.index = 0
+            empty_item.name = "Empty"
+            empty_item.color = DEFAULT_PALETTE[0]
+
+            for idx, (c_name, c_rgba) in enumerate(preset_linear_entries, start=1):
+                if idx > 255:
+                    break
+                item = props.palette.add()
+                item.index = idx
+                item.name = c_name or f"Color {idx}"
+                item.color = c_rgba
+
+        elif mode == "APPEND":
+            # Keep all existing entries; append preset colors that aren't already bit-close in palette
+            existing_colors = [tuple(e.color) for e in props.palette if e.index > 0]
+            existing_indices = {e.index for e in props.palette}
+
+            def is_already_present(target_col):
+                tr, tg, tb, _ = target_col
+                for er, eg, eb, _ in existing_colors:
+                    if (tr - er) ** 2 + (tg - eg) ** 2 + (tb - eb) ** 2 < 1e-4:
+                        return True
+                return False
+
+            next_idx = 1
+            for c_name, c_rgba in preset_linear_entries:
+                if is_already_present(c_rgba):
+                    continue
+                # Find lowest unused index
+                while next_idx in existing_indices and next_idx <= 255:
+                    next_idx += 1
+                if next_idx > 255:
+                    break
+                item = props.palette.add()
+                item.index = next_idx
+                item.name = c_name or f"Color {next_idx}"
+                item.color = c_rgba
+                existing_indices.add(next_idx)
+                existing_colors.append(c_rgba)
+
+        elif mode == "REMAP":
+            # Rebuild palette to contain the preset colors, and remap all existing voxels to nearest preset colors
+            # 1. Build candidates list from preset (indices 1..N)
+            candidates = []
+            for idx, (c_name, c_rgba) in enumerate(preset_linear_entries, start=1):
+                if idx > 255:
+                    break
+                candidates.append((idx, c_name, c_rgba))
+
+            candidate_colors_for_matching = [(idx, c_rgba) for idx, c_name, c_rgba in candidates]
+
+            # 2. Build remap table for all used old indices
+            remap_table = {}
+            for old_idx in counts.keys():
+                old_entry = next((e for e in props.palette if e.index == old_idx), None)
+                if old_entry is not None:
+                    old_rgba = tuple(old_entry.color)
+                    nearest_new_idx = find_nearest_palette_index(old_rgba, candidate_colors_for_matching)
+                    remap_table[old_idx] = nearest_new_idx
+
+            # 3. Apply remap on voxel grid
+            remap_volume_palette_indices(mesh, remap_table, push_undo=False)
+
+            # 4. Replace palette collection with preset colors
+            props.palette.clear()
+            empty_item = props.palette.add()
+            empty_item.index = 0
+            empty_item.name = "Empty"
+            empty_item.color = DEFAULT_PALETTE[0]
+
+            for idx, c_name, c_rgba in candidates:
+                item = props.palette.add()
+                item.index = idx
+                item.name = c_name or f"Color {idx}"
+                item.color = c_rgba
+
+        # Sync caches and IDProperties
+        from ..blender.persistence import serialize_volume
+        entry = get_or_load(mesh)
+        if entry is not None and entry.grid is not None:
+            serialize_volume(mesh, entry.grid, dirty_only=False)
+
+        refresh_palette_image(mesh)
+        drop_palette_lut(props.uuid)
+
+        # Set active color to index 1 or first available
+        scene = context.scene
+        if scene and hasattr(scene, "voxel_workspace"):
+            active_available = [e.index for e in props.palette if e.index > 0]
+            new_active = active_available[0] if active_available else 1
+            scene.voxel_workspace.active_palette_index = new_active
+            if 1 <= new_active <= 8:
+                scene.voxel_workspace.active_palette_choice = str(new_active)
+
+        tag_redraw_all_viewports()
+        self.report({'INFO'}, f"Loaded preset '{preset.name}' ({len(preset.colors)} colors) via {mode}")
+        return {'FINISHED'}
+
+
 PALETTE_OPERATOR_CLASSES = [
     VOXEL_OT_select_palette_color,
     VOXEL_OT_add_palette_color,
@@ -635,4 +932,6 @@ PALETTE_OPERATOR_CLASSES = [
     VOXEL_OT_remove_palette_color,
     VOXEL_OT_eyedropper,
     VOXEL_OT_compact_palette,
+    VOXEL_OT_save_palette_preset,
+    VOXEL_OT_load_palette_preset,
 ]
