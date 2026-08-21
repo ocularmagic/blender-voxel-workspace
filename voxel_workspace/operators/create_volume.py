@@ -16,7 +16,6 @@ from ..blender.properties import (
     init_voxel_object_properties,
 )
 from ..blender.persistence import init_volume_storage
-from ..blender.materials import ensure_voxel_material
 from ..blender.mesh_sync import sync_volume_mesh
 from ..blender.runtime import register_volume
 
@@ -101,9 +100,9 @@ class VOXEL_OT_create_volume(Operator):
         grid = VoxelGrid(extent_min=extent_min, extent_max_exclusive=extent_max, brick_size=32)
         init_volume_storage(mesh, grid=grid, push_undo=False)
 
-        # 4. Palette material and empty render mesh
-        ensure_voxel_material(mesh)
-        sync_volume_mesh(mesh, grid=grid, dirty_only=False, ensure_material=True, voxel_size=v_size)
+        # 4. Empty native-domain render mesh. Allocated palette entries already
+        # own Materials; slots are derived only when their indices are used.
+        sync_volume_mesh(mesh, grid=grid, dirty_only=False, ensure_material=False, voxel_size=v_size)
 
         # 5. Register runtime entry
         register_volume(

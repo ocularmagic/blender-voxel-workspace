@@ -46,15 +46,7 @@ from .runtime import (
 )
 
 from .materials import (
-    PALETTE_COLORS,
-    PALETTE_IMAGE_NAME,
-    PALETTE_MATERIAL_NAME,
     PALETTE_ATTRIBUTE_NAME,
-    PALETTE_TEXTURE_NODE_NAME,
-    get_or_create_palette_image,
-    get_or_create_palette_material,
-    refresh_palette_image,
-    ensure_voxel_material,
 )
 from .material_domains import (
     create_default_surface_material,
@@ -125,15 +117,7 @@ __all__ = [
     "cleanup_stale_volumes",
     "register_runtime",
     "unregister_runtime",
-    "PALETTE_COLORS",
-    "PALETTE_IMAGE_NAME",
-    "PALETTE_MATERIAL_NAME",
     "PALETTE_ATTRIBUTE_NAME",
-    "PALETTE_TEXTURE_NODE_NAME",
-    "get_or_create_palette_image",
-    "get_or_create_palette_material",
-    "refresh_palette_image",
-    "ensure_voxel_material",
     "create_default_surface_material",
     "create_default_volume_material",
     "ensure_entry_material",

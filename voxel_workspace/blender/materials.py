@@ -1,4 +1,8 @@
-"""Palette lookup image and single-material shader setup for Blender 5.x."""
+"""Legacy atlas migration helpers plus the shared palette attribute constant.
+
+Native material-domain rendering must not call the atlas constructors. They remain
+private-in-practice only so tests can create real schema-1 files for migration.
+"""
 from typing import Any, List, Optional, Tuple, Union
 import numpy as np
 

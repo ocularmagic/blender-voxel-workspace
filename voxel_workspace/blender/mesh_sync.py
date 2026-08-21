@@ -11,7 +11,7 @@ from ..constants import BrickCoord
 from ..core.grid import VoxelGrid
 from ..geometry.buffers import MeshBuffers
 from ..geometry.greedy import mesh_greedy
-from .materials import ensure_voxel_material, PALETTE_ATTRIBUTE_NAME
+from .materials import PALETTE_ATTRIBUTE_NAME
 
 
 def sync_volume_mesh(
@@ -134,8 +134,19 @@ def sync_volume_mesh(
     from .material_domains import reconcile_surface_slots
     slot_map = reconcile_surface_slots(mesh, grid)
 
-    if ensure_material:
-        ensure_voxel_material(mesh)
+    # Volume proxies must reconcile even when filtering leaves the primary
+    # surface mesh empty (for example a mist-only volume).
+    from .volume_proxy import reconcile_all_instances
+    reconcile_all_instances(
+        mesh,
+        grid,
+        volume_entry=entry,
+        dirty_bricks=dirty_bricks if dirty_only else None,
+        voxel_size=voxel_size,
+    )
+
+    from .material_domains import cleanup_legacy_atlas_datablocks
+    cleanup_legacy_atlas_datablocks(mesh)
 
     if not all_positions or vert_offset == 0:
         mesh.update()
@@ -192,16 +203,6 @@ def sync_volume_mesh(
         attr = mesh.attributes.new(name=PALETTE_ATTRIBUTE_NAME, type="INT", domain="CORNER")
 
     attr.data.foreach_set("value", corner_palette)
-
-    # Reconcile volume proxies for all primary objects sharing this mesh
-    from .volume_proxy import reconcile_all_instances
-    reconcile_all_instances(
-        mesh,
-        grid,
-        volume_entry=entry,
-        dirty_bricks=dirty_bricks if dirty_only else None,
-        voxel_size=voxel_size,
-    )
 
     mesh.update()
     return cpu_buffers

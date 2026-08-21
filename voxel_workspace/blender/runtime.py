@@ -179,17 +179,13 @@ def deduplicate_mesh_uuids(scene=None, depsgraph=None) -> List[Tuple[Any, str, s
                         if entry.index > 0:
                             copy_entry_material_for_mesh(entry, entry, new_uuid)
 
-                from .materials import (
-                    get_or_create_palette_material,
-                    get_or_create_palette_image,
-                )
-                # Create dedicated new material & image for the new UUID
-                new_img = get_or_create_palette_image(mesh, pack_image=False)
-                new_mat = get_or_create_palette_material(mesh, pack_image=False)
-                if len(mesh.materials) > 0:
-                    mesh.materials[0] = new_mat
-                else:
-                    mesh.materials.append(new_mat)
+                # Rebuild the dense native slot list from the forked entry
+                # pointers. Never inject the retired atlas material into slot 0.
+                from .material_domains import reconcile_surface_slots, cleanup_legacy_atlas_datablocks
+                runtime_entry = get_or_load(mesh)
+                if runtime_entry is not None:
+                    reconcile_surface_slots(mesh, runtime_entry.grid)
+                cleanup_legacy_atlas_datablocks(mesh)
 
                 repaired.append((mesh, old_uuid, new_uuid))
                 seen_uuids[new_uuid] = mesh
@@ -245,9 +241,9 @@ def reconcile_all_palette_caches(pack_images: bool = False) -> None:
     if bpy is None or not hasattr(bpy, "data") or not hasattr(bpy.data, "meshes"):
         return
     from .properties import ensure_palette, migrate_native_material_domains
-    from .material_domains import reconcile_surface_slots
-    from .materials import ensure_voxel_material, refresh_palette_image
-    from .volume_proxy import reconcile_all_instances, cleanup_stale_proxies
+    from .material_domains import cleanup_legacy_atlas_datablocks
+    from .volume_proxy import cleanup_stale_proxies
+    from .mesh_sync import sync_volume_mesh
     from .gpu_preview import drop_palette_lut
 
     cleanup_stale_proxies()
@@ -258,16 +254,13 @@ def reconcile_all_palette_caches(pack_images: bool = False) -> None:
                 ensure_palette(mesh)
             migrate_native_material_domains(mesh)
             
-            # Reconcile primary surface slots & volume proxies if runtime volume exists
-            vol_uuid = mesh.voxel_workspace.uuid
-            entry = get_volume(vol_uuid)
+            entry = get_or_load(mesh)
             if entry is not None and entry.grid is not None:
-                reconcile_surface_slots(mesh, entry.grid)
-                reconcile_all_instances(mesh, entry.grid, volume_entry=entry)
+                entry.cpu_buffers.clear()
+                entry.volume_proxy_buffers.clear()
+                sync_volume_mesh(mesh, grid=entry.grid, entry=entry, dirty_only=False, ensure_material=False)
 
-            ensure_voxel_material(mesh, pack_image=pack_images)
-            if not pack_images:
-                refresh_palette_image(mesh)
+            cleanup_legacy_atlas_datablocks(mesh)
 
             drop_palette_lut(mesh.voxel_workspace.uuid)
 
@@ -309,15 +302,13 @@ def on_save_pre(*args) -> None:
     if bpy is None or not hasattr(bpy, "data") or not hasattr(bpy.data, "meshes"):
         return
     from .persistence import serialize_volume
-    from .materials import get_or_create_palette_image
+
 
     mesh_by_uuid: Dict[str, Any] = {}
     for mesh in bpy.data.meshes:
         if hasattr(mesh, "voxel_workspace") and mesh.voxel_workspace.uuid:
             mesh_by_uuid[mesh.voxel_workspace.uuid] = mesh
-            # Ensure palette image exists and is packed before file save
-            if mesh.voxel_workspace.is_voxel_mesh:
-                get_or_create_palette_image(mesh)
+
 
     for vol_uuid, entry in list(_REGISTRY.items()):
         mesh = mesh_by_uuid.get(vol_uuid)

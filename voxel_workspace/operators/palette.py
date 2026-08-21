@@ -25,7 +25,6 @@ from ..core.presets import (
 )
 from ..blender.runtime import get_volume, get_or_load, tag_redraw_all_viewports
 from ..blender.persistence import serialize_volume, commit_volume_state
-from ..blender.materials import refresh_palette_image, ensure_voxel_material
 from ..blender.gpu_preview import drop_palette_lut, update_volume_gpu_preview
 from ..geometry.visible_faces import mesh_visible_faces
 
@@ -124,6 +123,22 @@ def get_used_palette_counts(mesh: Any) -> Dict[int, int]:
     return counts
 
 
+def reconcile_native_render(mesh: Any) -> None:
+    """Fully reconcile native surface slots, proxy domains, and GPU preview."""
+    entry = get_or_load(mesh)
+    if entry is None or entry.grid is None:
+        return
+    entry.cpu_buffers.clear()
+    entry.volume_proxy_buffers.clear()
+    entry.gpu_batches.clear()
+    entry.gpu_edge_batches.clear()
+    entry.palette_lut = None
+    from ..blender.mesh_sync import sync_volume_mesh
+    sync_volume_mesh(mesh, grid=entry.grid, entry=entry, dirty_only=False, ensure_material=False)
+    drop_palette_lut(mesh.voxel_workspace.uuid)
+    update_volume_gpu_preview(entry, dirty_only=False)
+
+
 class VOXEL_OT_select_palette_color(Operator):
     """Set the active placement color index."""
     bl_idname = "voxel.select_palette_color"
@@ -160,6 +175,98 @@ class VOXEL_OT_select_palette_color(Operator):
                     obj.active_material_index = surf_indices.index(self.index)
 
         tag_redraw_all_viewports()
+        return {'FINISHED'}
+
+
+class VOXEL_OT_edit_palette_material(Operator):
+    """Select a palette index and atomically edit its native Material/domain binding."""
+    bl_idname = "voxel.edit_palette_material"
+    bl_label = "Edit Palette Material"
+    bl_options = {'REGISTER'}
+
+    def _material_items(_self, _context):
+        items = [("__NEW__", "New Default Material", "Create a new owned default for this domain")]
+        if bpy is not None:
+            for idx, material in enumerate(bpy.data.materials, start=1):
+                items.append((material.name, material.name, "Use existing Blender Material", idx))
+        return items
+
+    if bpy is not None:
+        index: IntProperty(name="Index", default=1, min=1, max=255)
+        domain: EnumProperty(
+            name="Domain",
+            items=[
+                ("SURFACE", "Surface", "Render on the primary multi-material mesh"),
+                ("VOLUME", "Volume", "Render through a closed volume proxy"),
+            ],
+            default="SURFACE",
+        )
+        material_choice: EnumProperty(name="Material", items=_material_items)
+
+    def invoke(self, context, event):
+        obj = context.active_object
+        if obj is None or obj.type != 'MESH' or not hasattr(obj.data, "voxel_workspace"):
+            return {'CANCELLED'}
+        entry = next((item for item in obj.data.voxel_workspace.palette if item.index == self.index), None)
+        if entry is None:
+            return {'CANCELLED'}
+        context.scene.voxel_workspace.active_palette_index = self.index
+        self.domain = entry.material_domain
+        self.material_choice = entry.material.name if entry.material is not None else "__NEW__"
+        return context.window_manager.invoke_props_dialog(self, width=420)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.label(text=f"Palette Index {self.index}", icon='MATERIAL')
+        layout.prop(self, "domain")
+        layout.prop(self, "material_choice")
+        layout.label(text="Use Material Properties or Shader Editor for the full node graph.", icon='INFO')
+
+    def execute(self, context):
+        obj = context.active_object
+        if obj is None or obj.type != 'MESH' or not hasattr(obj.data, "voxel_workspace"):
+            return {'CANCELLED'}
+        mesh = obj.data
+        entry = next((item for item in mesh.voxel_workspace.palette if item.index == self.index), None)
+        if entry is None:
+            return {'CANCELLED'}
+
+        old_domain = entry.material_domain
+        old_material = entry.material
+        old_owned = bool(entry.material_owned)
+        try:
+            entry.material_domain = self.domain
+            selected_material = None if self.material_choice == "__NEW__" else bpy.data.materials.get(self.material_choice)
+            if selected_material is None:
+                from ..blender.material_domains import create_default_surface_material, create_default_volume_material
+                selected_material = (
+                    create_default_volume_material(mesh, entry)
+                    if self.domain == "VOLUME"
+                    else create_default_surface_material(mesh, entry)
+                )
+                entry.material_owned = True
+            else:
+                entry.material_owned = bool(
+                    selected_material.get("voxel_workspace_owned", False)
+                    and selected_material.get("voxel_workspace_owner_uuid", "") == mesh.voxel_workspace.uuid
+                )
+            entry.material = selected_material
+            reconcile_native_render(mesh)
+        except Exception as exc:
+            entry.material_domain = old_domain
+            entry.material = old_material
+            entry.material_owned = old_owned
+            try:
+                reconcile_native_render(mesh)
+            except Exception:
+                pass
+            self.report({'ERROR'}, f"Failed to edit palette material: {exc}")
+            return {'CANCELLED'}
+
+        if old_material != entry.material:
+            from ..blender.material_domains import cleanup_owned_materials
+            cleanup_owned_materials([old_material])
+        bpy.ops.ed.undo_push(message="Edit Palette Material")
         return {'FINISHED'}
 
 
@@ -234,7 +341,7 @@ class VOXEL_OT_set_palette_material_domain(Operator):
     bl_idname = "voxel.set_palette_material_domain"
     bl_label = "Set Material Domain"
     bl_description = "Switch between Surface and Volume render domains for this palette entry"
-    bl_options = {'REGISTER', 'UNDO'}
+    bl_options = {'REGISTER'}
 
     if bpy is not None:
         index: IntProperty(name="Index", default=1, min=1, max=255)
@@ -262,30 +369,41 @@ class VOXEL_OT_set_palette_material_domain(Operator):
         if old_domain == self.domain:
             return {'FINISHED'}
 
-        entry.material_domain = self.domain
-        
-        # If entry has default generated material of previous kind, update it to match new domain
-        if entry.material_owned and entry.material is not None:
-            from ..blender.material_domains import create_default_surface_material, create_default_volume_material
-            kind = entry.material.get("voxel_workspace_generated_kind", "")
-            if self.domain == "VOLUME" and kind == "SURFACE_DEFAULT":
-                entry.material = create_default_volume_material(mesh, entry, volume_color=tuple(entry.color))
-            elif self.domain == "SURFACE" and kind == "VOLUME_DEFAULT":
-                entry.material = create_default_surface_material(mesh, entry, base_color=tuple(entry.color))
+        old_material = entry.material
+        old_owned = bool(entry.material_owned)
+        replacement_material = old_material
+        try:
+            # Replace only untouched generated defaults. Arbitrary/external node
+            # graphs remain bound and the user controls their Surface/Volume links.
+            if old_owned and old_material is not None:
+                from ..blender.material_domains import create_default_surface_material, create_default_volume_material
+                kind = old_material.get("voxel_workspace_generated_kind", "")
+                if self.domain == "VOLUME" and kind == "SURFACE_DEFAULT":
+                    replacement_material = create_default_volume_material(mesh, entry, volume_color=tuple(entry.color))
+                elif self.domain == "SURFACE" and kind == "VOLUME_DEFAULT":
+                    replacement_material = create_default_surface_material(mesh, entry, base_color=tuple(entry.color))
 
-        # Invalidate caches and fully re-sync primary mesh and proxies
-        vol_entry = get_or_load(mesh)
-        if vol_entry is not None:
-            vol_entry.cpu_buffers.clear()
-            vol_entry.volume_proxy_buffers.clear()
-            vol_entry.gpu_batches.clear()
-            vol_entry.gpu_edge_batches.clear()
-            vol_entry.palette_lut = None
-            if vol_entry.grid is not None:
-                from ..blender.mesh_sync import sync_volume_mesh
-                sync_volume_mesh(mesh, grid=vol_entry.grid, entry=vol_entry, dirty_only=False)
+            entry.material_domain = self.domain
+            entry.material = replacement_material
+            entry.material_owned = old_owned
+            reconcile_native_render(mesh)
+        except Exception as exc:
+            entry.material_domain = old_domain
+            entry.material = old_material
+            entry.material_owned = old_owned
+            try:
+                reconcile_native_render(mesh)
+            except Exception:
+                pass
+            self.report({'ERROR'}, f"Failed to change material domain: {exc}")
+            return {'CANCELLED'}
+
+        if replacement_material != old_material:
+            from ..blender.material_domains import cleanup_owned_materials
+            cleanup_owned_materials([old_material])
 
         tag_redraw_all_viewports()
+        bpy.ops.ed.undo_push(message="Set Palette Material Domain")
         self.report({'INFO'}, f"Color [{self.index}] domain set to {self.domain}")
         return {'FINISHED'}
 
@@ -378,7 +496,6 @@ class VOXEL_OT_add_palette_color(Operator):
             domain="SURFACE",
         )
 
-        refresh_palette_image(mesh)
         drop_palette_lut(props.uuid)
 
         # Set as active color in scene
@@ -443,18 +560,12 @@ class VOXEL_OT_duplicate_palette_color(Operator):
             self.report({'ERROR'}, "Palette is full (maximum 255 colors)")
             return {'CANCELLED'}
 
-        from ..blender.material_domains import initialize_palette_entry
+        from ..blender.material_domains import copy_palette_entry_binding
         item = props.palette.add()
-        initialize_palette_entry(
-            mesh,
-            item,
-            index=new_index,
-            name=f"{src_entry.name} (Copy)" if src_entry.name else f"Color {new_index}",
-            color=src_entry.color,
-            domain=getattr(src_entry, "material_domain", "SURFACE"),
-        )
+        copy_palette_entry_binding(src_entry, item, mesh.voxel_workspace.uuid)
+        item.index = new_index
+        item.name = f"{src_entry.name} (Copy)" if src_entry.name else f"Color {new_index}"
 
-        refresh_palette_image(mesh)
         drop_palette_lut(props.uuid)
 
         context.scene.voxel_workspace.active_palette_index = new_index
@@ -578,6 +689,8 @@ class VOXEL_OT_remove_palette_color(Operator):
             self.report({'WARNING'}, f"Color index {self.index} not in palette")
             return {'CANCELLED'}
 
+        removed_material = props.palette[target_item_pos].material
+
         counts = get_used_palette_counts(mesh)
         used_count = counts.get(self.index, 0)
 
@@ -606,8 +719,9 @@ class VOXEL_OT_remove_palette_color(Operator):
         if entry is not None and entry.grid is not None:
             serialize_volume(mesh, entry.grid, dirty_only=False)
 
-        refresh_palette_image(mesh)
-        drop_palette_lut(props.uuid)
+        reconcile_native_render(mesh)
+        from ..blender.material_domains import cleanup_owned_materials
+        cleanup_owned_materials([removed_material])
 
         # If the removed index was active, pick the replacement or another valid index
         scene = context.scene
@@ -759,11 +873,20 @@ class VOXEL_OT_compact_palette(Operator):
         for new_idx, old_idx in enumerate(used_indices, start=1):
             remap_table[old_idx] = new_idx
 
-        # Snapshot used palette colors & names
+        from ..blender.material_domains import palette_materials, cleanup_owned_materials
+        old_materials = palette_materials(mesh)
+
+        # Snapshot complete authoritative bindings under their new indices.
         saved_entries = {}
         for entry in props.palette:
             if entry.index in remap_table:
-                saved_entries[remap_table[entry.index]] = (entry.name, tuple(entry.color))
+                saved_entries[remap_table[entry.index]] = {
+                    "name": str(entry.name),
+                    "color": tuple(entry.color),
+                    "domain": str(entry.material_domain),
+                    "material": entry.material,
+                    "owned": bool(entry.material_owned),
+                }
 
         # Remap occupied bricks
         remap_volume_palette_indices(
@@ -784,13 +907,27 @@ class VOXEL_OT_compact_palette(Operator):
         empty_item.material_domain = "SURFACE"
         empty_item.material_owned = True
 
-        from ..blender.material_domains import initialize_palette_entry
-
         # Add remapped entries 1..N
         for new_idx in range(1, len(used_indices) + 1):
             item = props.palette.add()
-            name, col = saved_entries.get(new_idx, (f"Color {new_idx}", (0.5, 0.5, 0.5, 1.0)))
-            initialize_palette_entry(mesh, item, index=new_idx, name=name, color=col, domain="SURFACE")
+            saved = saved_entries.get(new_idx)
+            if saved is None:
+                from ..blender.material_domains import initialize_palette_entry
+                initialize_palette_entry(
+                    mesh,
+                    item,
+                    index=new_idx,
+                    name=f"Color {new_idx}",
+                    color=(0.5, 0.5, 0.5, 1.0),
+                    domain="SURFACE",
+                )
+            else:
+                item.index = new_idx
+                item.name = saved["name"]
+                item.color = saved["color"]
+                item.material_domain = saved["domain"]
+                item.material = saved["material"]
+                item.material_owned = saved["owned"]
 
         # If no colors used at all, ensure defaults
         if len(used_indices) == 0:
@@ -803,8 +940,8 @@ class VOXEL_OT_compact_palette(Operator):
         if entry is not None and entry.grid is not None:
             serialize_volume(mesh, entry.grid, dirty_only=False)
 
-        refresh_palette_image(mesh)
-        drop_palette_lut(props.uuid)
+        reconcile_native_render(mesh)
+        cleanup_owned_materials(old_materials)
 
         # Update active color in scene
         old_active = context.scene.voxel_workspace.active_palette_index
@@ -992,6 +1129,8 @@ class VOXEL_OT_load_palette_preset(Operator):
 
         mesh = obj.data
         props = mesh.voxel_workspace
+        from ..blender.material_domains import palette_materials, cleanup_owned_materials
+        old_materials = palette_materials(mesh)
         from ..blender.properties import ensure_palette
         if len(props.palette) == 0:
             ensure_palette(mesh)
@@ -1093,8 +1232,8 @@ class VOXEL_OT_load_palette_preset(Operator):
         if entry is not None and entry.grid is not None:
             serialize_volume(mesh, entry.grid, dirty_only=False)
 
-        refresh_palette_image(mesh)
-        drop_palette_lut(props.uuid)
+        reconcile_native_render(mesh)
+        cleanup_owned_materials(old_materials)
 
         # Set active color to index 1 or first available
         scene = context.scene
@@ -1112,6 +1251,7 @@ class VOXEL_OT_load_palette_preset(Operator):
 
 PALETTE_OPERATOR_CLASSES = [
     VOXEL_OT_select_palette_color,
+    VOXEL_OT_edit_palette_material,
     VOXEL_OT_sync_display_to_material_color,
     VOXEL_OT_sync_material_to_display_color,
     VOXEL_OT_set_palette_material_domain,

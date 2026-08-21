@@ -29,10 +29,11 @@ def _is_voxel_object(obj: Any) -> bool:
     )
 
 
-def replace_volume_palette(mesh: Any, palette: List[Tuple[float, float, float, float]]) -> None:
+def replace_volume_palette(mesh: Any, palette: List[Tuple[float, float, float, float]]) -> List[Any]:
     """Replace the mesh palette collection with owned default surface materials. Index 0 remains empty."""
-    from ..blender.material_domains import initialize_palette_entry
+    from ..blender.material_domains import initialize_palette_entry, palette_materials
     props = mesh.voxel_workspace
+    old_materials = palette_materials(mesh)
     props.palette.clear()
     empty = props.palette.add()
     empty.index = 0
@@ -54,6 +55,7 @@ def replace_volume_palette(mesh: Any, palette: List[Tuple[float, float, float, f
             color=tuple(float(c) for c in color),
             domain="SURFACE",
         )
+    return old_materials
 
 
 def _commit_import(obj: Any, result: Any, undo_message: str) -> None:
@@ -74,26 +76,25 @@ def _commit_import(obj: Any, result: Any, undo_message: str) -> None:
     else:
         entry.grid = result.grid
         entry.cpu_buffers.clear()
+        entry.volume_proxy_buffers.clear()
         entry.gpu_batches.clear()
         entry.gpu_edge_batches.clear()
         entry.dirty_bricks.clear()
         entry.palette_lut = None
 
-    replace_volume_palette(mesh, result.palette)
+    old_materials = replace_volume_palette(mesh, result.palette)
 
     from ..blender.persistence import serialize_volume
-    from ..blender.materials import ensure_voxel_material, refresh_palette_image, get_or_create_palette_image
     from ..blender.mesh_sync import sync_volume_mesh
     from ..blender.gpu_preview import drop_palette_lut, update_volume_gpu_preview
 
     serialize_volume(mesh, entry.grid, dirty_only=False)
-    ensure_voxel_material(mesh)
-    get_or_create_palette_image(mesh, pack_image=True)
-    refresh_palette_image(mesh)
     drop_palette_lut(uuid_str)
     v_size = float(mesh.voxel_workspace.voxel_size)
     sync_volume_mesh(mesh, grid=entry.grid, entry=entry, dirty_only=False, ensure_material=True, voxel_size=v_size)
     update_volume_gpu_preview(entry, dirty_only=False)
+    from ..blender.material_domains import cleanup_owned_materials
+    cleanup_owned_materials(old_materials)
 
     if bpy is not None and hasattr(bpy.ops, "ed") and hasattr(bpy.ops.ed, "undo_push"):
         try:

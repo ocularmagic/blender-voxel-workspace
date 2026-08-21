@@ -5,7 +5,7 @@ import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-PRESET_SCHEMA_VERSION = 1
+PRESET_SCHEMA_VERSION = 2
 
 
 def linear_to_srgb_byte(val: float) -> int:
@@ -88,7 +88,9 @@ class PalettePreset:
         for item in raw_colors:
             c_name = str(item.get("name", ""))
             c_val = list(item.get("color", [0, 0, 0, 255]))
-            c_dom = str(item.get("domain", "SURFACE"))
+            c_dom = str(item.get("domain", "SURFACE")).upper()
+            if c_dom not in {"SURFACE", "VOLUME"}:
+                c_dom = "SURFACE"
             # Ensure 4 components
             while len(c_val) < 4:
                 c_val.append(255)

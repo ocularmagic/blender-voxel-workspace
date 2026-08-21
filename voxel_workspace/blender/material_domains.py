@@ -189,11 +189,54 @@ def remove_owned_material_if_unreferenced(material: Any) -> bool:
     if not material.get("voxel_workspace_owned", False):
         return False
 
-    # Check Blender users
     if material.users == 0:
         bpy.data.materials.remove(material)
         return True
     return False
+
+
+def cleanup_owned_materials(materials: List[Any]) -> int:
+    """Remove unique generated Materials after every Blender user releases them."""
+    removed = 0
+    seen = set()
+    for material in materials:
+        if material is None:
+            continue
+        key = material.as_pointer() if hasattr(material, "as_pointer") else id(material)
+        if key in seen:
+            continue
+        seen.add(key)
+        if remove_owned_material_if_unreferenced(material):
+            removed += 1
+    return removed
+
+
+def palette_materials(mesh: Any) -> List[Any]:
+    """Snapshot all non-null Material pointers bound by a palette."""
+    if mesh is None or not hasattr(mesh, "voxel_workspace"):
+        return []
+    return [entry.material for entry in mesh.voxel_workspace.palette if entry.material is not None]
+
+
+def cleanup_legacy_atlas_datablocks(mesh: Any) -> None:
+    """Delete recognized, unreferenced atlas caches after native slot reconciliation."""
+    if bpy is None or mesh is None or not hasattr(mesh, "voxel_workspace"):
+        return
+    mesh_uuid = mesh.voxel_workspace.uuid
+    mat = bpy.data.materials.get(f"VoxelPaletteMaterial_{mesh_uuid}")
+    if mat is not None and mat.users == 0:
+        bpy.data.materials.remove(mat)
+    image = bpy.data.images.get(f"VoxelPalette_{mesh_uuid}")
+    if image is not None and image.users == 0:
+        bpy.data.images.remove(image)
+
+
+def copy_palette_entry_binding(src_entry: Any, dst_entry: Any, mesh_uuid: str) -> None:
+    """Copy complete entry metadata using owned-copy/external-share semantics."""
+    dst_entry.index = int(src_entry.index)
+    dst_entry.name = str(src_entry.name)
+    dst_entry.color = tuple(float(component) for component in src_entry.color)
+    copy_entry_material_for_mesh(src_entry, dst_entry, mesh_uuid)
 
 
 def set_generated_surface_base_color(entry: Any, color: Optional[Tuple[float, float, float, float]] = None) -> bool:
@@ -285,9 +328,12 @@ def reconcile_surface_slots(mesh: Any, grid: Any) -> Dict[int, int]:
         entry = palette_lookup.get(pal_idx)
         mat = ensure_entry_material(mesh, entry) if entry else None
         if mat is None:
-            # Fallback default surface material if entry missing
-            mat = bpy.data.materials.new(name=f"VoxelSurface_Fallback_{pal_idx}")
-            mat.use_nodes = True
+            # Stable shared fallback for corrupt/legacy grids whose index has no
+            # palette entry. Never allocate an anonymous Material per sync.
+            mat = bpy.data.materials.get("VoxelSurface_Fallback")
+            if mat is None:
+                mat = bpy.data.materials.new(name="VoxelSurface_Fallback")
+                mat.use_nodes = True
         mesh.materials.append(mat)
         slot_map[pal_idx] = slot_idx
 

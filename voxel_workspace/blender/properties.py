@@ -42,20 +42,16 @@ def _display_changed(_self, _context):
 def _palette_color_updated(self, _context):
     """Callback when a palette entry's color is modified.
     
-    Performs only three cheap operations:
-    1. refresh_palette_image(mesh) (updates pixels, NO pack, NO undo_push)
-    2. drops the cached preview LUT and stale GPU batches
-    3. tag_redraw_all_viewports()
+    Invalidates only the display-color GPU cache and redraws viewports. Native
+    Blender Materials are authoritative for rendered shading.
     """
-    from .runtime import _UNDO_GUARD, tag_redraw_all_viewports, get_volume
+    from .runtime import _UNDO_GUARD, tag_redraw_all_viewports
     if _UNDO_GUARD or bpy is None:
         return
-    # Find owning mesh from id_data if possible
+    # Find owning mesh UUID from id_data if possible.
     mesh = getattr(self, "id_data", None)
     uuid_str = None
     if mesh is not None and hasattr(mesh, "voxel_workspace"):
-        from .materials import refresh_palette_image
-        refresh_palette_image(mesh)
         uuid_str = getattr(mesh.voxel_workspace, "uuid", None)
     try:
         from .gpu_preview import drop_palette_lut
@@ -295,6 +291,9 @@ def ensure_palette(mesh: Any) -> None:
     props = mesh.voxel_workspace
     if not hasattr(props, "palette"):
         return
+
+    if len(props.palette) > 0 and props.palette_schema_version < 2:
+        migrate_native_material_domains(mesh)
     
     # If palette already has entries, do not re-inject deleted indices
     if len(props.palette) > 0:
@@ -348,7 +347,7 @@ def init_voxel_mesh_properties(
     props.brick_size = brick_size
     props.voxel_size = voxel_size
     props.schema_version = schema_version
-    props.palette_schema_version = 1
+    props.palette_schema_version = 2
     props.palette_index_bits = 8
     props.palette_color_space = "sRGB"
     if len(props.palette) == 0:

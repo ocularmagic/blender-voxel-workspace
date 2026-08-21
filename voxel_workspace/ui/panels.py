@@ -144,7 +144,7 @@ class VOXEL_PT_main_panel(Panel):
                     row.scale_x = 1.0
                     # Square button with custom swatch icon (color fill + active border + center used dot) and no number text
                     op = row.operator(
-                        "voxel.select_palette_color",
+                        "voxel.edit_palette_material",
                         text="",
                         icon_value=icon_id if icon_id != 0 else 0,
                     )
@@ -161,13 +161,16 @@ class VOXEL_PT_main_panel(Panel):
                     )
                     # Color picker for in-place editing
                     edit_box.prop(active_entry, "color", text="")
+                    edit_box.label(text="Display color controls brush/GPU preview; Material controls render.", icon='INFO')
                     edit_box.prop(active_entry, "name", text="Name")
 
                     # Native Material Controls
                     mat_box = edit_box.box()
                     mat_box.label(text="Native Blender Material", icon='MATERIAL')
-                    mat_box.prop(active_entry, "material_domain", text="Domain")
-                    mat_box.template_ID(active_entry, "material", open="material.open")
+                    mat_box.label(text=f"Domain: {active_entry.material_domain.title()}")
+                    mat_box.label(text=f"Material: {active_entry.material.name if active_entry.material else 'None'}")
+                    edit_op = mat_box.operator("voxel.edit_palette_material", text="Edit Material Binding…", icon='PREFERENCES')
+                    edit_op.index = active_index
 
                     sync_row = mat_box.row(align=True)
                     op_apply = sync_row.operator("voxel.sync_display_to_material", text="Apply Display", icon='FORWARD')

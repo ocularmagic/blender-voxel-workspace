@@ -40,10 +40,14 @@ def find_proxy(parent_obj: Any, palette_index: int) -> Optional[Any]:
     """Find an existing volume proxy child object for the given parent object and palette index."""
     if parent_obj is None:
         return None
+    source_uuid = ""
+    if getattr(parent_obj, "data", None) is not None and hasattr(parent_obj.data, "voxel_workspace"):
+        source_uuid = parent_obj.data.voxel_workspace.uuid
     for child in parent_obj.children:
         if (
             child.get(PROXY_OBJECT_FLAG, False)
             and child.get(PROXY_PALETTE_INDEX_FLAG, -1) == palette_index
+            and child.get(PROXY_SOURCE_UUID_FLAG, "") == source_uuid
         ):
             return child
     return None
@@ -78,9 +82,18 @@ def ensure_proxy(parent_obj: Any, mesh: Any, entry_item: Any) -> Any:
         # Configure display mode and metadata
         proxy_obj.display_type = 'WIRE'
         proxy_obj.show_wire = True
+        proxy_obj.hide_select = True
         proxy_obj[PROXY_OBJECT_FLAG] = True
         proxy_obj[PROXY_SOURCE_UUID_FLAG] = mesh_uuid
         proxy_obj[PROXY_PALETTE_INDEX_FLAG] = pal_idx
+
+    # Repair metadata/display properties on existing proxies too.
+    proxy_obj[PROXY_OBJECT_FLAG] = True
+    proxy_obj[PROXY_SOURCE_UUID_FLAG] = mesh_uuid
+    proxy_obj[PROXY_PALETTE_INDEX_FLAG] = pal_idx
+    proxy_obj.display_type = 'WIRE'
+    proxy_obj.show_wire = True
+    proxy_obj.hide_select = True
 
     # Ensure proxy material slot 0
     mat = ensure_entry_material(mesh, entry_item)
@@ -221,6 +234,14 @@ def reconcile_volume_proxies(
         return
 
     props = mesh.voxel_workspace
+    mesh_uuid = props.uuid
+    for child in list(parent_obj.children):
+        if child.get(PROXY_OBJECT_FLAG, False) and child.get(PROXY_SOURCE_UUID_FLAG, "") != mesh_uuid:
+            child_mesh = child.data
+            bpy.data.objects.remove(child, do_unlink=True)
+            if child_mesh is not None and child_mesh.users == 0:
+                bpy.data.meshes.remove(child_mesh)
+
     vol_indices = used_volume_indices(mesh, grid)
     current_proxies = {
         c.get(PROXY_PALETTE_INDEX_FLAG, -1): c
@@ -287,7 +308,10 @@ def cleanup_stale_proxies() -> List[str]:
         if obj.get(PROXY_OBJECT_FLAG, False):
             source_uuid = obj.get(PROXY_SOURCE_UUID_FLAG, "")
             parent = obj.parent
-            if parent is None or source_uuid not in active_mesh_uuids:
+            parent_uuid = ""
+            if parent is not None and getattr(parent, "data", None) is not None and hasattr(parent.data, "voxel_workspace"):
+                parent_uuid = parent.data.voxel_workspace.uuid
+            if parent is None or source_uuid not in active_mesh_uuids or parent_uuid != source_uuid:
                 m = obj.data
                 bpy.data.objects.remove(obj, do_unlink=True)
                 if m and m.users == 0:
