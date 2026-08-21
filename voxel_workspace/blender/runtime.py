@@ -2,6 +2,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 import uuid as uuid_lib
+import numpy as np
 
 try:
     import bpy
@@ -25,6 +26,7 @@ class VoxelVolumeEntry:
     gpu_edge_batches: Dict[BrickCoord, Any] = field(default_factory=dict)
     dirty_bricks: Set[BrickCoord] = field(default_factory=set)
     voxel_size: float = 1.0
+    palette_lut: Optional[np.ndarray] = None
 
 
 _REGISTRY: Dict[str, VoxelVolumeEntry] = {}
@@ -141,6 +143,9 @@ def deduplicate_mesh_uuids(scene=None, depsgraph=None) -> List[Tuple[Any, str, s
     """Scan bpy.data.meshes for duplicate UUIDs and repair them with new UUIDs.
     
     Guarded against reentrancy and idempotent.
+    Also forks palette datablocks (material.copy, image.copy, rebind texture node,
+    assign slot 0, rename) because mesh.copy copies the IDProperty palette by value
+    but the materials list by reference.
     Returns a list of repaired tuples: (mesh, old_uuid, new_uuid).
     """
     global _DEDUPE_GUARD
@@ -164,6 +169,17 @@ def deduplicate_mesh_uuids(scene=None, depsgraph=None) -> List[Tuple[Any, str, s
                 new_uuid = str(uuid_lib.uuid4())
                 old_uuid = vol_uuid
                 mesh.voxel_workspace.uuid = new_uuid
+
+                # Fork palette datablocks for the duplicated mesh
+                from .materials import (
+                    get_or_create_palette_material,
+                    get_or_create_palette_image,
+                    ensure_voxel_material,
+                )
+                # Create dedicated new material & image for the new UUID
+                new_mat = get_or_create_palette_material(mesh)
+                ensure_voxel_material(mesh)
+
                 repaired.append((mesh, old_uuid, new_uuid))
                 seen_uuids[new_uuid] = mesh
     finally:
@@ -213,28 +229,73 @@ def on_depsgraph_update(scene, depsgraph) -> None:
     deduplicate_mesh_uuids(scene, depsgraph)
 
 
+def reconcile_all_palette_caches(pack_images: bool = False) -> None:
+    """Rebuild palette images and LUTs from authoritative Mesh properties for all voxel meshes."""
+    if bpy is None or not hasattr(bpy, "data") or not hasattr(bpy.data, "meshes"):
+        return
+    from .materials import (
+        ensure_voxel_material,
+        refresh_palette_image,
+    )
+    from .properties import ensure_palette
+    from .gpu_preview import drop_palette_lut
+
+    for mesh in bpy.data.meshes:
+        if hasattr(mesh, "voxel_workspace") and mesh.voxel_workspace.is_voxel_mesh:
+            if len(mesh.voxel_workspace.palette) == 0:
+                ensure_palette(mesh)
+            ensure_voxel_material(mesh, pack_image=pack_images)
+            if not pack_images:
+                refresh_palette_image(mesh)
+            drop_palette_lut(mesh.voxel_workspace.uuid)
+
+    tag_redraw_all_viewports()
+
+
+def _reconcile_timer_callback() -> None:
+    """Main-thread timer callback for deferred post-undo/post-redo cache reconciliation."""
+    reconcile_all_palette_caches(pack_images=False)
+    return None
+
+
+def _schedule_palette_reconcile() -> None:
+    """Schedule one cache reconciliation after Blender's handler returns."""
+    if bpy is None or not hasattr(bpy.app, "timers"):
+        return
+    try:
+        if not bpy.app.timers.is_registered(_reconcile_timer_callback):
+            bpy.app.timers.register(_reconcile_timer_callback, first_interval=0.0)
+    except Exception:
+        pass
+
+
 @persistent
 def on_load_post(*args) -> None:
-    """File load handler: reset runtime cache across file opens."""
+    """File load handler: reset runtime cache and reconcile palette datablocks."""
     try:
         from .gpu_preview import cleanup_gpu_preview
         cleanup_gpu_preview()
     except Exception:
         pass
     clear_registry()
+    reconcile_all_palette_caches(pack_images=False)
 
 
 @persistent
 def on_save_pre(*args) -> None:
-    """Pre-save handler: flush dirty runtime grids to Mesh IDProperties."""
+    """Pre-save handler: flush dirty runtime grids to Mesh IDProperties and pack palette images."""
     if bpy is None or not hasattr(bpy, "data") or not hasattr(bpy.data, "meshes"):
         return
     from .persistence import serialize_volume
+    from .materials import get_or_create_palette_image
 
     mesh_by_uuid: Dict[str, Any] = {}
     for mesh in bpy.data.meshes:
         if hasattr(mesh, "voxel_workspace") and mesh.voxel_workspace.uuid:
             mesh_by_uuid[mesh.voxel_workspace.uuid] = mesh
+            # Ensure palette image exists and is packed before file save
+            if mesh.voxel_workspace.is_voxel_mesh:
+                get_or_create_palette_image(mesh)
 
     for vol_uuid, entry in list(_REGISTRY.items()):
         mesh = mesh_by_uuid.get(vol_uuid)
@@ -248,7 +309,7 @@ def on_undo_post(*args) -> None:
     """Post-undo handler: invalidate runtime cache, clear hover/GPU state, tag viewports.
     
     Guarded against reentrancy. Performs NO datablock writes and pushes NO undo steps.
-    Preserves active editing UUID when matching mesh still exists.
+    Schedules main-thread cache reconciliation after the handler returns.
     """
     global _UNDO_GUARD, _ACTIVE_VOLUME_UUID
     if _UNDO_GUARD:
@@ -269,10 +330,14 @@ def on_undo_post(*args) -> None:
         _REGISTRY.clear()
 
         try:
-            from .gpu_preview import clear_hover_state
+            from .gpu_preview import clear_hover_state, drop_palette_lut
             clear_hover_state()
+            drop_palette_lut()
         except Exception:
             pass
+
+        # Reconcile only after this handler returns; handlers must remain read-only.
+        _schedule_palette_reconcile()
 
         tag_redraw_all_viewports()
     finally:
@@ -284,7 +349,7 @@ def on_redo_post(*args) -> None:
     """Post-redo handler: invalidate runtime cache, clear hover/GPU state, tag viewports.
     
     Guarded against reentrancy. Performs NO datablock writes and pushes NO undo steps.
-    Preserves active editing UUID when matching mesh still exists.
+    Schedules main-thread cache reconciliation after the handler returns.
     """
     global _UNDO_GUARD, _ACTIVE_VOLUME_UUID
     if _UNDO_GUARD:
@@ -305,10 +370,14 @@ def on_redo_post(*args) -> None:
         _REGISTRY.clear()
 
         try:
-            from .gpu_preview import clear_hover_state
+            from .gpu_preview import clear_hover_state, drop_palette_lut
             clear_hover_state()
+            drop_palette_lut()
         except Exception:
             pass
+
+        # Reconcile only after this handler returns; handlers must remain read-only.
+        _schedule_palette_reconcile()
 
         tag_redraw_all_viewports()
     finally:
@@ -336,6 +405,8 @@ def unregister_runtime() -> None:
     clear_registry()
     if bpy is None:
         return
+    if hasattr(bpy.app, "timers") and bpy.app.timers.is_registered(_reconcile_timer_callback):
+        bpy.app.timers.unregister(_reconcile_timer_callback)
     if on_depsgraph_update in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.remove(on_depsgraph_update)
     if on_load_post in bpy.app.handlers.load_post:

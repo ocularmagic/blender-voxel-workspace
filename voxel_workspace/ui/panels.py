@@ -10,7 +10,7 @@ except ImportError:
     Panel = object
 
 from ..blender.runtime import get_volume
-from .palette_icons import PALETTE_NAMES
+from ..operators.palette import get_used_palette_counts
 
 
 class VOXEL_PT_main_panel(Panel):
@@ -42,8 +42,8 @@ class VOXEL_PT_main_panel(Panel):
         )
 
         vol_box = layout.box()
-        if is_voxel:
-            mesh = obj.data
+        mesh = obj.data if is_voxel else None
+        if is_voxel and mesh is not None:
             props = mesh.voxel_workspace
             vol_box.label(text=f"Volume: {obj.name}", icon='MESH_CUBE')
 
@@ -70,27 +70,75 @@ class VOXEL_PT_main_panel(Panel):
         else:
             vol_box.label(text="No active voxel volume", icon='INFO')
 
-        # 3. Palette Section
+        # 3. Dynamic Palette Section for Active Volume
         scene = context.scene
         if scene is not None and hasattr(scene, "voxel_workspace"):
             pal_box = layout.box()
-            pal_box.label(text="Placement Color", icon='COLOR')
+            pal_header = pal_box.row()
+            pal_header.label(text="Palette", icon='COLOR')
+            if is_voxel and mesh is not None:
+                pal_header.operator("voxel.eyedropper", text="Pick", icon='EYEDROPPER')
+                pal_header.operator("voxel.add_palette_color", text="Add", icon='ADD')
+                pal_header.operator("voxel.compact_palette", text="Compact", icon='ALIGN_JUSTIFY')
+
             palette_props = scene.voxel_workspace
-            grid = pal_box.grid_flow(row_major=True, columns=4, even_columns=True, even_rows=True)
-            for index in range(1, 9):
-                button = grid.row(align=True)
-                button.scale_y = 1.6
-                button.prop_enum(
-                    palette_props,
-                    "active_palette_choice",
-                    str(index),
-                    text="",
-                )
-            active_index = int(palette_props.active_palette_choice)
-            pal_box.label(
-                text=f"Active: {PALETTE_NAMES[active_index]}  •  Index {active_index}",
-                icon='RADIOBUT_ON',
-            )
+            active_index = palette_props.active_palette_index
+
+            if is_voxel and mesh is not None:
+                props = mesh.voxel_workspace
+                counts = get_used_palette_counts(mesh)
+
+                # Filter row: All / Used
+                filter_row = pal_box.row(align=True)
+                filter_row.prop(palette_props, "palette_filter", expand=True)
+
+                # Collect non-zero entries sorted by index
+                all_entries = sorted([e for e in props.palette if e.index > 0], key=lambda e: e.index)
+                if palette_props.palette_filter == "USED":
+                    entries = [e for e in all_entries if counts.get(e.index, 0) > 0]
+                else:
+                    entries = all_entries
+
+                # Swatch Grid
+                grid_flow = pal_box.grid_flow(row_major=True, columns=4, even_columns=True, even_rows=True)
+                for entry_item in entries:
+                    idx = entry_item.index
+                    is_active = (idx == active_index)
+                    cell_box = grid_flow.box() if is_active else grid_flow.column()
+                    row = cell_box.row(align=True)
+                    row.scale_y = 1.3
+                    # Operator button to select this swatch
+                    op = row.operator(
+                        "voxel.select_palette_color",
+                        text=f"[{idx}]" if is_active else str(idx),
+                        icon='RADIOBUT_ON' if is_active else 'RADIOBUT_OFF',
+                    )
+                    op.index = idx
+
+                # Active Swatch Editor Details
+                active_entry = next((e for e in props.palette if e.index == active_index), None)
+                if active_entry is not None:
+                    edit_box = pal_box.box()
+                    active_count = counts.get(active_index, 0)
+                    edit_box.label(
+                        text=f"Color [{active_index}]  •  {active_count} voxels",
+                        icon='COLOR',
+                    )
+                    # Color picker for in-place editing
+                    edit_box.prop(active_entry, "color", text="")
+                    edit_box.prop(active_entry, "name", text="Name")
+
+                    # Duplicate & Remove Actions
+                    btn_row = edit_box.row(align=True)
+                    dup_op = btn_row.operator("voxel.duplicate_palette_color", text="Duplicate", icon='DUPLICATE')
+                    dup_op.source_index = active_index
+
+                    rem_op = btn_row.operator("voxel.remove_palette_color", text="Remove", icon='TRASH')
+                    rem_op.index = active_index
+                    rem_op.replacement_index = 1 if active_index != 1 else (all_entries[1].index if len(all_entries) > 1 else 0)
+            else:
+                # Fallback display when no volume selected
+                pal_box.label(text=f"Active Brush Index: {active_index}", icon='RADIOBUT_ON')
 
         # 4. Tool & Stroke Actions (Task 11 safe references)
         tools_box = layout.box()
@@ -102,6 +150,9 @@ class VOXEL_PT_main_panel(Panel):
             "show_voxel_edges",
             text="Show Voxel Edges",
         )
+        # Active Color Indicator near brush controls
+        active_idx = context.scene.voxel_workspace.active_palette_index
+        tools_col.label(text=f"Active Brush Color: Index [{active_idx}]", icon='COLOR')
         tools_col.separator(factor=0.5)
 
         # Start Place

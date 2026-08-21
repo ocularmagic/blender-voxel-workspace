@@ -246,14 +246,41 @@ class BrushSession:
                 stop_editing(context)
                 return {'FINISHED'}
 
+        # 3b. Handle Eyedropper Hotkey (Alt+LMB or 'I' key press)
+        is_eyedropper_event = (
+            (event.type == 'I' and event.value == 'PRESS')
+            or (getattr(event, "alt", False) and event.type == 'LEFTMOUSE' and event.value == 'PRESS')
+        )
+        if is_eyedropper_event and not self.is_dragging:
+            # Trace ray against occupied voxels using DDA trace_grid
+            if view3d_utils is not None:
+                region, rv3d, rx, ry = self.resolve_view3d_region(context, event)
+                if region is not None and rv3d is not None:
+                    try:
+                        from ..core.dda import trace_grid
+                        from ..core.line import world_ray_to_grid_ray
+                        origin_world = view3d_utils.region_2d_to_origin_3d(region, rv3d, (rx, ry))
+                        dir_world = view3d_utils.region_2d_to_vector_3d(region, rv3d, (rx, ry))
+                        if origin_world is not None and dir_world is not None:
+                            origin_grid, dir_grid = world_ray_to_grid_ray(
+                                origin_world, dir_world, obj.matrix_world, voxel_size=entry.voxel_size
+                            )
+                            hit = trace_grid(entry.grid, origin_grid, dir_grid, max_distance=1000.0)
+                            if hit is not None:
+                                picked_index = entry.grid.get(hit.cell)
+                                if picked_index > 0:
+                                    context.scene.voxel_workspace.active_palette_index = picked_index
+                                    if 1 <= picked_index <= 8:
+                                        context.scene.voxel_workspace.active_palette_choice = str(picked_index)
+                                    tag_redraw_all_viewports()
+                                    return {'RUNNING_MODAL'}
+                    except Exception:
+                        pass
+            return {'RUNNING_MODAL'}
+
         # Sidebar and other UI events must remain available while editing.
-        if event.type == 'LEFTMOUSE' and (
-            event.value == 'PRESS' or not self.is_dragging
-        ):
-            region, _rv3d, _rx, _ry = self.resolve_view3d_region(context, event)
-            if region is None:
-                return {'PASS_THROUGH'}
-        if event.type == 'MOUSEMOVE':
+        # But if mouse is not in a sidebar region, don't drop plain mousemove in background tests.
+        if event.type == 'LEFTMOUSE' and not self.is_dragging:
             region, _rv3d, _rx, _ry = self.resolve_view3d_region(context, event)
             if region is None:
                 return {'PASS_THROUGH'}
@@ -263,6 +290,10 @@ class BrushSession:
 
         # 4. Handle LMB Press (Start Stroke)
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            # Ensure target region is VIEW_3D WINDOW
+            region, _rv3d, _rx, _ry = self.resolve_view3d_region(context, event)
+            if region is None:
+                return {'PASS_THROUGH'}
             self.is_dragging = True
             self.stroke = VoxelStroke(brick_size=entry.grid.brick_size)
             self.pick_grid = snapshot_grid(entry.grid) if self.mode == 'PLACE' else None

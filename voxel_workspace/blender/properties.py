@@ -1,13 +1,15 @@
 """Blender custom properties for voxel volumes and objects."""
-from typing import Optional, Union
+from typing import Any, Optional, Union
 import uuid
 
 try:
     import bpy
     from bpy.props import (
         BoolProperty,
+        CollectionProperty,
         EnumProperty,
         FloatProperty,
+        FloatVectorProperty,
         IntProperty,
         IntVectorProperty,
         PointerProperty,
@@ -17,8 +19,10 @@ try:
 except ImportError:
     bpy = None
     PropertyGroup = object
-    BoolProperty = EnumProperty = FloatProperty = IntProperty = IntVectorProperty = PointerProperty = StringProperty = None
+    BoolProperty = CollectionProperty = EnumProperty = FloatProperty = FloatVectorProperty = IntProperty = IntVectorProperty = PointerProperty = StringProperty = None
     Mesh = Object = None
+
+from ..constants import DEFAULT_PALETTE
 
 
 def _palette_items(self, context):
@@ -35,13 +39,86 @@ def _display_changed(_self, _context):
     tag_redraw_all_viewports()
 
 
+def _palette_color_updated(self, _context):
+    """Callback when a palette entry's color is modified.
+    
+    Performs only three cheap operations:
+    1. refresh_palette_image(mesh) (updates pixels, NO pack, NO undo_push)
+    2. drops the cached preview LUT and stale GPU batches
+    3. tag_redraw_all_viewports()
+    """
+    from .runtime import _UNDO_GUARD, tag_redraw_all_viewports, get_volume
+    if _UNDO_GUARD or bpy is None:
+        return
+    # Find owning mesh from id_data if possible
+    mesh = getattr(self, "id_data", None)
+    uuid_str = None
+    if mesh is not None and hasattr(mesh, "voxel_workspace"):
+        from .materials import refresh_palette_image
+        refresh_palette_image(mesh)
+        uuid_str = getattr(mesh.voxel_workspace, "uuid", None)
+    try:
+        from .gpu_preview import drop_palette_lut
+        drop_palette_lut(uuid_str)
+    except Exception:
+        pass
+    tag_redraw_all_viewports()
+
+
+class VoxelPaletteEntry(PropertyGroup):
+    """A single color entry in a voxel volume's palette."""
+    if bpy is not None:
+        index: IntProperty(
+            name="Index",
+            description="Palette index (1-255, 0 reserved for empty)",
+            default=0,
+            min=0,
+            max=255,
+        )
+        name: StringProperty(
+            name="Name",
+            description="Display name for this palette entry",
+            default="",
+        )
+        color: FloatVectorProperty(
+            name="Color",
+            description="Linear RGBA color for this palette entry",
+            size=4,
+            subtype='COLOR',
+            default=(1.0, 1.0, 1.0, 1.0),
+            min=0.0,
+            max=1.0,
+            update=_palette_color_updated,
+        )
+
+
 class VoxelMeshProperties(PropertyGroup):
     """Authoritative voxel volume metadata stored on the Mesh datablock."""
     if bpy is not None:
         schema_version: IntProperty(
             name="Schema Version",
             description="Version of the voxel persistence layout",
+            default=2,
+        )
+        palette_schema_version: IntProperty(
+            name="Palette Schema Version",
+            description="Version of the palette schema",
             default=1,
+        )
+        palette_index_bits: IntProperty(
+            name="Palette Index Bits",
+            description="Bit-width of palette indices (default 8)",
+            default=8,
+        )
+        palette_color_space: StringProperty(
+            name="Palette Color Space",
+            description="Interchange color space (default sRGB)",
+            default="sRGB",
+        )
+        palette: CollectionProperty(
+            type=VoxelPaletteEntry,
+            name="Palette",
+            description="Per-volume color palette",
         )
         uuid: StringProperty(
             name="Volume UUID",
@@ -102,7 +179,7 @@ class VoxelSceneProperties(PropertyGroup):
             description="Stored color index used by the voxel brush",
             default=1,
             min=1,
-            max=8,
+            max=255,
         )
         active_palette_choice: EnumProperty(
             name="Placement Color",
@@ -110,6 +187,15 @@ class VoxelSceneProperties(PropertyGroup):
             items=_palette_items,
             default=1,
             update=_palette_choice_changed,
+        )
+        palette_filter: EnumProperty(
+            name="Palette Filter",
+            description="Filter visible palette swatches",
+            items=[
+                ("ALL", "All", "Show all palette colors"),
+                ("USED", "Used", "Show only colors used in this volume"),
+            ],
+            default="ALL",
         )
         active_tool: EnumProperty(
             name="Active Tool",
@@ -128,6 +214,46 @@ class VoxelSceneProperties(PropertyGroup):
         )
 
 
+def ensure_palette(mesh: Any) -> None:
+    """Ensure the mesh palette collection contains index 0 and default colors 1-8 if empty.
+    
+    Idempotent and never pushes undo. Old .blend files or new volumes receive
+    the defaults without altering voxel indices.
+    """
+    if mesh is None or not hasattr(mesh, "voxel_workspace"):
+        return
+    props = mesh.voxel_workspace
+    if not hasattr(props, "palette"):
+        return
+    
+    # If palette already has entries, do not re-inject deleted indices
+    if len(props.palette) > 0:
+        return
+
+    # Check index 0 (reserved empty)
+    item = props.palette.add()
+    item.index = 0
+    item.name = "Empty"
+    item.color = DEFAULT_PALETTE[0]
+
+    # Populate default indices 1..8
+    default_names = {
+        1: "Neutral Gray",
+        2: "Red",
+        3: "Green",
+        4: "Blue",
+        5: "Yellow",
+        6: "Magenta",
+        7: "Cyan",
+        8: "Orange",
+    }
+    for idx in range(1, len(DEFAULT_PALETTE)):
+        item = props.palette.add()
+        item.index = idx
+        item.name = default_names.get(idx, f"Color {idx}")
+        item.color = DEFAULT_PALETTE[idx]
+
+
 def init_voxel_mesh_properties(
     mesh: "bpy.types.Mesh",
     uuid_str: Optional[str] = None,
@@ -135,7 +261,7 @@ def init_voxel_mesh_properties(
     extent_max: tuple[int, int, int] = (32, 32, 32),
     brick_size: int = 32,
     voxel_size: float = 1.0,
-    schema_version: int = 1,
+    schema_version: int = 2,
 ) -> str:
     """Initialize voxel metadata on a Blender Mesh ID and return its UUID."""
     if not uuid_str:
@@ -148,6 +274,11 @@ def init_voxel_mesh_properties(
     props.brick_size = brick_size
     props.voxel_size = voxel_size
     props.schema_version = schema_version
+    props.palette_schema_version = 1
+    props.palette_index_bits = 8
+    props.palette_color_space = "sRGB"
+    if len(props.palette) == 0:
+        ensure_palette(mesh)
     return uuid_str
 
 
@@ -176,6 +307,7 @@ def get_volume_uuid(target: Union["bpy.types.Mesh", "bpy.types.Object", None]) -
 
 
 PROPERTY_CLASSES = [
+    VoxelPaletteEntry,
     VoxelMeshProperties,
     VoxelObjectProperties,
     VoxelSceneProperties,

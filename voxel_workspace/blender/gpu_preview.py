@@ -11,32 +11,111 @@ except ImportError:
     gpu = None
     batch_for_shader = None
 
-from ..constants import BrickCoord
+from ..constants import BrickCoord, DEFAULT_PALETTE
 from ..geometry.buffers import MeshBuffers
 from ..geometry.visible_faces import mesh_visible_faces
 from .materials import PALETTE_COLORS
 
 
-# Precomputed 256x4 float32 palette color table
-_PALETTE_RGBA_LUT: Optional[np.ndarray] = None
+# Fallback default 256x4 float32 palette color table
+_DEFAULT_PALETTE_RGBA_LUT: Optional[np.ndarray] = None
 
 
-def get_palette_rgba_lut() -> np.ndarray:
-    """Return the (256, 4) float32 RGBA palette lookup array."""
-    global _PALETTE_RGBA_LUT
-    if _PALETTE_RGBA_LUT is None:
+def _build_default_palette_rgba_lut() -> np.ndarray:
+    """Return a default (256, 4) float32 RGBA palette lookup array."""
+    global _DEFAULT_PALETTE_RGBA_LUT
+    if _DEFAULT_PALETTE_RGBA_LUT is None:
         lut = np.zeros((256, 4), dtype=np.float32)
-        lut[:, 3] = 1.0
-        for i, col in enumerate(PALETTE_COLORS):
+        for i, col in enumerate(DEFAULT_PALETTE):
             if i < 256:
                 lut[i] = col
-        _PALETTE_RGBA_LUT = lut
-    return _PALETTE_RGBA_LUT
+        _DEFAULT_PALETTE_RGBA_LUT = lut
+    return _DEFAULT_PALETTE_RGBA_LUT
 
 
-def palette_indices_to_rgba(palette_indices: np.ndarray) -> np.ndarray:
-    """Map an array of integer palette indices to an (N, 4) float32 RGBA array."""
-    lut = get_palette_rgba_lut()
+def drop_palette_lut(target: Any = None) -> None:
+    """Drop the cached palette RGBA LUT and clear GPU batches so they regenerate with new colors."""
+    global _DEFAULT_PALETTE_RGBA_LUT
+    _DEFAULT_PALETTE_RGBA_LUT = None
+
+    if target is None:
+        from .runtime import all_volumes
+        for entry in all_volumes().values():
+            entry.palette_lut = None
+            if hasattr(entry, "gpu_batches"):
+                entry.gpu_batches.clear()
+        return
+
+    entry = None
+    if isinstance(target, str):
+        from .runtime import get_volume
+        entry = get_volume(target)
+    elif hasattr(target, "palette_lut"):
+        entry = target
+
+    if entry is not None:
+        entry.palette_lut = None
+        if hasattr(entry, "gpu_batches"):
+            entry.gpu_batches.clear()
+
+
+def get_palette_rgba_lut(target: Any = None) -> np.ndarray:
+    """Return the (256, 4) float32 RGBA palette lookup array for a volume entry or target.
+    
+    Lazily built from the Mesh palette collection and cached on VoxelVolumeEntry.palette_lut.
+    Always emits 256 rows; unallocated rows are transparent black [0, 0, 0, 0]
+    (with row 0 reserved empty).
+    """
+    entry = None
+    mesh = None
+
+    if target is not None:
+        if hasattr(target, "palette_lut"):
+            entry = target
+        elif isinstance(target, str):
+            from .runtime import get_volume
+            entry = get_volume(target)
+        elif bpy is not None and hasattr(target, "voxel_workspace"):
+            mesh = target
+        elif bpy is not None and hasattr(target, "data") and hasattr(target.data, "voxel_workspace"):
+            mesh = target.data
+
+    if entry is not None and entry.palette_lut is not None:
+        return entry.palette_lut
+
+    # Resolve mesh from entry if not already found
+    if mesh is None and entry is not None and bpy is not None and hasattr(bpy, "data") and hasattr(bpy.data, "meshes"):
+        for m in bpy.data.meshes:
+            if hasattr(m, "voxel_workspace") and m.voxel_workspace.uuid == entry.uuid:
+                mesh = m
+                break
+
+    if mesh is not None and hasattr(mesh, "voxel_workspace"):
+        props = mesh.voxel_workspace
+        lut = np.zeros((256, 4), dtype=np.float32)
+        if len(props.palette) == 0:
+            from .properties import ensure_palette
+            ensure_palette(mesh)
+        for p_entry in props.palette:
+            idx = int(p_entry.index)
+            if 0 <= idx < 256:
+                lut[idx] = tuple(p_entry.color)
+        if entry is not None:
+            entry.palette_lut = lut
+        return lut
+
+    if entry is not None:
+        default_lut = _build_default_palette_rgba_lut().copy()
+        entry.palette_lut = default_lut
+        return default_lut
+
+    return _build_default_palette_rgba_lut()
+
+
+def palette_indices_to_rgba(palette_indices: np.ndarray, lut: Optional[np.ndarray] = None) -> np.ndarray:
+    """Map an array of integer palette indices to an (N, 4) float32 RGBA array using a LUT."""
+    if lut is None:
+        lut = get_palette_rgba_lut()
     clipped = np.clip(palette_indices, 0, 255)
     return lut[clipped]
 
@@ -173,7 +252,10 @@ def build_hover_face_mesh_data(
 
 # --- GPU Batch Builders ---
 
-def build_brick_gpu_batch(mesh_buffers: Optional[MeshBuffers]) -> Optional[Any]:
+def build_brick_gpu_batch(
+    mesh_buffers: Optional[MeshBuffers],
+    lut: Optional[np.ndarray] = None,
+) -> Optional[Any]:
     """Create a single indexed GPUBatch from visible-face MeshBuffers with vertex RGBA colors."""
     if mesh_buffers is None or mesh_buffers.quad_count == 0 or len(mesh_buffers.positions) == 0:
         return None
@@ -187,7 +269,7 @@ def build_brick_gpu_batch(mesh_buffers: Optional[MeshBuffers]) -> Optional[Any]:
 
     pos = mesh_buffers.positions
     ind = mesh_buffers.indices
-    colors = palette_indices_to_rgba(mesh_buffers.palette_indices)
+    colors = palette_indices_to_rgba(mesh_buffers.palette_indices, lut=lut)
 
     return batch_for_shader(shader, 'TRIS', {'pos': pos, 'color': colors}, indices=ind)
 
@@ -363,6 +445,7 @@ def update_volume_gpu_preview(
 
     s = grid.brick_size
     v_size = entry.voxel_size
+    lut = get_palette_rgba_lut(entry)
 
     for coord in remesh_targets:
         brick = grid.bricks.get(coord)
@@ -376,7 +459,7 @@ def update_volume_gpu_preview(
             buf = mesh_visible_faces(apron, origin=origin, voxel_size=v_size, brick=brick)
             if buf.quad_count > 0:
                 cpu_buffers[coord] = buf
-                batch = build_brick_gpu_batch(buf)
+                batch = build_brick_gpu_batch(buf, lut=lut)
                 if batch is not None:
                     gpu_batches[coord] = batch
                 else:

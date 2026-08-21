@@ -50,8 +50,10 @@ from .materials import (
     PALETTE_IMAGE_NAME,
     PALETTE_MATERIAL_NAME,
     PALETTE_ATTRIBUTE_NAME,
+    PALETTE_TEXTURE_NODE_NAME,
     get_or_create_palette_image,
     get_or_create_palette_material,
+    refresh_palette_image,
     ensure_voxel_material,
 )
 from .mesh_sync import (
@@ -97,8 +99,10 @@ __all__ = [
     "PALETTE_IMAGE_NAME",
     "PALETTE_MATERIAL_NAME",
     "PALETTE_ATTRIBUTE_NAME",
+    "PALETTE_TEXTURE_NODE_NAME",
     "get_or_create_palette_image",
     "get_or_create_palette_material",
+    "refresh_palette_image",
     "ensure_voxel_material",
     "sync_volume_mesh",
 ]

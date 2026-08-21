@@ -13,11 +13,23 @@ from .brush import (
     VOXEL_OT_brush,
     BRUSH_OPERATOR_CLASSES,
 )
+from .palette import (
+    VOXEL_OT_select_palette_color,
+    VOXEL_OT_add_palette_color,
+    VOXEL_OT_duplicate_palette_color,
+    VOXEL_OT_remove_palette_color,
+    VOXEL_OT_eyedropper,
+    VOXEL_OT_compact_palette,
+    PALETTE_OPERATOR_CLASSES,
+    remap_volume_palette_indices,
+    get_used_palette_counts,
+)
 
 OPERATOR_CLASSES: List[Type] = [
     VOXEL_OT_create_volume,
     *EDIT_SESSION_OPERATOR_CLASSES,
     *BRUSH_OPERATOR_CLASSES,
+    *PALETTE_OPERATOR_CLASSES,
 ]
 
 __all__ = [
@@ -26,5 +38,13 @@ __all__ = [
     "VOXEL_OT_start_erase",
     "VOXEL_OT_stop_editing",
     "VOXEL_OT_brush",
+    "VOXEL_OT_select_palette_color",
+    "VOXEL_OT_add_palette_color",
+    "VOXEL_OT_duplicate_palette_color",
+    "VOXEL_OT_remove_palette_color",
+    "VOXEL_OT_eyedropper",
+    "VOXEL_OT_compact_palette",
+    "remap_volume_palette_indices",
+    "get_used_palette_counts",
     "OPERATOR_CLASSES",
 ]

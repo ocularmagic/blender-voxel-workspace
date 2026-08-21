@@ -28,7 +28,7 @@ from ..constants import BRICK_SIZE, BrickCoord
 from ..core.grid import VoxelGrid
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 BRICK_KEY_PATTERN = re.compile(r"^vox_brick_(-?\d+)_(-?\d+)_(-?\d+)$")
 
 
@@ -156,11 +156,13 @@ def deserialize_volume(
     """Deserialize voxel bricks from Mesh custom IDProperties into a VoxelGrid.
     
     Reads metadata from mesh.voxel_workspace and restores all vox_brick_* arrays.
+    Accepts persistence schema versions 1 and 2.
     """
     if hasattr(mesh, "voxel_workspace"):
-        brick_size = int(mesh.voxel_workspace.brick_size)
-        extent_min = tuple(mesh.voxel_workspace.extent_min)
-        extent_max = tuple(mesh.voxel_workspace.extent_max)
+        props = mesh.voxel_workspace
+        brick_size = int(props.brick_size)
+        extent_min = tuple(props.extent_min)
+        extent_max = tuple(props.extent_max)
     else:
         brick_size = BRICK_SIZE
         extent_min = (0, 0, 0)

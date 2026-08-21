@@ -7,74 +7,135 @@ try:
 except ImportError:
     bpy = None
 
+from ..constants import DEFAULT_PALETTE
+from .properties import ensure_palette
+
 PALETTE_IMAGE_NAME = "VoxelPalette"
 PALETTE_MATERIAL_NAME = "VoxelPaletteMaterial"
 PALETTE_ATTRIBUTE_NAME = "palette_index"
+PALETTE_TEXTURE_NODE_NAME = "VoxelPaletteTextureNode"
 
-# 256x1 lookup image; the current UI exposes the eight defined MVP colors.
-PALETTE_COLORS: List[Tuple[float, float, float, float]] = [
-    (0.0, 0.0, 0.0, 1.0),      # 0: Empty / Background
-    (0.5, 0.5, 0.5, 1.0),      # 1: Neutral Gray (default)
-    (1.0, 0.03, 0.03, 1.0),    # 2: Red
-    (0.03, 1.0, 0.03, 1.0),    # 3: Green
-    (0.03, 0.15, 1.0, 1.0),    # 4: Blue
-    (1.0, 0.8, 0.03, 1.0),     # 5: Yellow
-    (0.8, 0.03, 1.0, 1.0),     # 6: Magenta
-    (0.03, 1.0, 1.0, 1.0),     # 7: Cyan
-    (1.0, 0.3, 0.03, 1.0),     # 8: Orange
-]
+# Re-export PALETTE_COLORS for backward compatibility
+PALETTE_COLORS = list(DEFAULT_PALETTE)
 
 
-def get_or_create_palette_image() -> Any:
-    """Get or create the 256x1 Non-Color nearest palette lookup image datablock."""
+def _build_palette_pixel_array(mesh: Any) -> np.ndarray:
+    """Build a (256, 4) float32 RGBA array from the mesh's palette collection.
+
+    Unallocated rows are transparent black [0.0, 0.0, 0.0, 0.0].
+    """
+    pix = np.zeros((256, 4), dtype=np.float32)
+
+    if mesh is not None and hasattr(mesh, "voxel_workspace"):
+        props = mesh.voxel_workspace
+        if len(props.palette) == 0:
+            ensure_palette(mesh)
+        for entry in props.palette:
+            idx = int(entry.index)
+            if 0 <= idx < 256:
+                pix[idx] = tuple(entry.color)
+    else:
+        for i, c in enumerate(DEFAULT_PALETTE):
+            if i < 256:
+                pix[i] = c
+
+    return pix
+
+
+def get_or_create_palette_image(mesh: Any = None, pack_image: bool = True) -> Any:
+    """Get or create the 256x1 Non-Color nearest palette lookup image for a mesh.
+
+    Image is named VoxelPalette_<uuid> if mesh has a UUID, otherwise VoxelPalette.
+    Called only at volume creation / material setup; does NOT push undo.
+    """
     if bpy is None:
         return None
 
-    pix = np.zeros((256, 4), dtype=np.float32)
-    pix[:, 3] = 1.0
-    for i, c in enumerate(PALETTE_COLORS):
-        pix[i] = c
+    target_mesh = getattr(mesh, "data", mesh)
+    uuid_str = ""
+    if target_mesh is not None and hasattr(target_mesh, "voxel_workspace"):
+        uuid_str = target_mesh.voxel_workspace.uuid
 
-    img = bpy.data.images.get(PALETTE_IMAGE_NAME)
+    image_name = f"VoxelPalette_{uuid_str}" if uuid_str else PALETTE_IMAGE_NAME
+
+    img = bpy.data.images.get(image_name)
     if img is None or img.size[0] != 256 or img.size[1] != 1:
         if img is not None:
             bpy.data.images.remove(img)
         img = bpy.data.images.new(
-            PALETTE_IMAGE_NAME,
+            image_name,
             width=256,
             height=1,
             alpha=True,
             float_buffer=False,
         )
+
     img.colorspace_settings.name = "Non-Color"
+    pix = _build_palette_pixel_array(target_mesh)
     img.pixels.foreach_set(pix.reshape(-1))
     img.update()
-    # Generated image pixel edits are not reliably preserved by a .blend
-    # round-trip unless packed. The vertical slice must reopen and render
-    # palette colors without an external sidecar image.
-    img.pack()
+    if pack_image:
+        img.pack()
     return img
 
 
-def get_or_create_palette_material() -> Any:
-    """Get or create the single VoxelPaletteMaterial shader graph (D6).
+def refresh_palette_image(mesh: Any) -> None:
+    """Rewrite pixels and update the palette image for a mesh.
+
+    Does NOT call pack() and does NOT push undo.
+    """
+    if bpy is None or mesh is None:
+        return
+
+    target_mesh = getattr(mesh, "data", mesh)
+
+    # The generated palette node is the only valid binding. Images and names are
+    # derived caches, so never guess from unrelated nodes or datablock names.
+    img = None
+    if target_mesh is not None and hasattr(target_mesh, "materials") and len(target_mesh.materials) > 0:
+        mat = target_mesh.materials[0]
+        if mat is not None and mat.node_tree is not None:
+            if PALETTE_TEXTURE_NODE_NAME in mat.node_tree.nodes:
+                node = mat.node_tree.nodes[PALETTE_TEXTURE_NODE_NAME]
+                if node.bl_idname == "ShaderNodeTexImage" and node.image is not None:
+                    img = node.image
+    if img is None:
+        return
+
+    pix = _build_palette_pixel_array(target_mesh)
+    img.pixels.foreach_set(pix.reshape(-1))
+    img.update()
+
+
+def get_or_create_palette_material(mesh: Any = None, pack_image: bool = True) -> Any:
+    """Get or create the VoxelPaletteMaterial_<uuid> shader graph for a mesh (D6).
     
     Samples nearest from 256x1 palette image at (palette_index + 0.5) / 256.
-    Does NOT assign deprecated Material.use_nodes.
+    Binds the texture node to the volume's per-volume palette image.
     """
     if bpy is None:
         return None
 
-    palette_image = get_or_create_palette_image()
-    if PALETTE_MATERIAL_NAME in bpy.data.materials:
-        mat = bpy.data.materials[PALETTE_MATERIAL_NAME]
+    target_mesh = getattr(mesh, "data", mesh)
+    uuid_str = ""
+    if target_mesh is not None and hasattr(target_mesh, "voxel_workspace"):
+        uuid_str = target_mesh.voxel_workspace.uuid
+
+    mat_name = f"VoxelPaletteMaterial_{uuid_str}" if uuid_str else PALETTE_MATERIAL_NAME
+    palette_image = get_or_create_palette_image(target_mesh, pack_image=pack_image)
+
+    mat = bpy.data.materials.get(mat_name)
+    if mat is not None:
         if mat.node_tree is not None and len(mat.node_tree.nodes) > 0:
-            for node in mat.node_tree.nodes:
+            if PALETTE_TEXTURE_NODE_NAME in mat.node_tree.nodes:
+                node = mat.node_tree.nodes[PALETTE_TEXTURE_NODE_NAME]
                 if node.bl_idname == "ShaderNodeTexImage":
                     node.image = palette_image
-            return mat
+                    return mat
+            # A malformed/legacy UUID-owned material is rebuilt below. Do not
+            # repurpose arbitrary image nodes as the palette texture node.
     else:
-        mat = bpy.data.materials.new(PALETTE_MATERIAL_NAME)
+        mat = bpy.data.materials.new(mat_name)
 
     nt = mat.node_tree
     if nt is None:
@@ -99,6 +160,7 @@ def get_or_create_palette_material() -> Any:
     comb.inputs["Y"].default_value = 0.5
 
     tex = nt.nodes.new("ShaderNodeTexImage")
+    tex.name = PALETTE_TEXTURE_NODE_NAME
     tex.image = palette_image
     tex.interpolation = "Closest"
     tex.extension = "EXTEND"
@@ -124,8 +186,8 @@ def get_or_create_palette_material() -> Any:
     return mat
 
 
-def ensure_voxel_material(target: Any) -> Any:
-    """Ensure that the given Mesh or Object has exactly one material slot with VoxelPaletteMaterial."""
+def ensure_voxel_material(target: Any, pack_image: bool = True) -> Any:
+    """Ensure that the given Mesh or Object has exactly one material slot with its per-volume palette material."""
     if target is None or bpy is None:
         return None
 
@@ -133,7 +195,7 @@ def ensure_voxel_material(target: Any) -> Any:
     if mesh is None or not hasattr(mesh, "materials"):
         return None
 
-    mat = get_or_create_palette_material()
+    mat = get_or_create_palette_material(mesh, pack_image=pack_image)
     if len(mesh.materials) == 0:
         mesh.materials.append(mat)
     else:
