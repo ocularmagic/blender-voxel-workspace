@@ -463,8 +463,16 @@ class VOXEL_OT_eyedropper(Operator):
             return {'CANCELLED'}
 
         # Modal sample on click
-        context.window_manager.modal_handler_add(self)
-        context.window.cursor_set('EYEDROPPER')
+        if hasattr(context, "window_manager") and context.window_manager is not None:
+            try:
+                context.window_manager.modal_handler_add(self)
+            except Exception:
+                pass
+        if hasattr(context, "window") and context.window is not None:
+            try:
+                context.window.cursor_set('EYEDROPPER')
+            except Exception:
+                pass
         return {'RUNNING_MODAL'}
 
     def modal(self, context, event):

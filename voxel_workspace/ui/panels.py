@@ -11,6 +11,7 @@ except ImportError:
 
 from ..blender.runtime import get_volume
 from ..operators.palette import get_used_palette_counts
+from .palette_icons import generate_swatch_icon_id
 
 
 class VOXEL_PT_main_panel(Panel):
@@ -99,19 +100,28 @@ class VOXEL_PT_main_panel(Panel):
                 else:
                     entries = all_entries
 
-                # Swatch Grid
-                grid_flow = pal_box.grid_flow(row_major=True, columns=4, even_columns=True, even_rows=True)
+                # Swatch Grid: Square buttons with swatch color fill, highlighted active border, and small center dot if used
+                grid_flow = pal_box.grid_flow(row_major=True, columns=6, even_columns=True, even_rows=True)
                 for entry_item in entries:
                     idx = entry_item.index
                     is_active = (idx == active_index)
-                    cell_box = grid_flow.box() if is_active else grid_flow.column()
+                    is_used = (counts.get(idx, 0) > 0)
+                    icon_id = generate_swatch_icon_id(
+                        tuple(entry_item.color),
+                        is_active=is_active,
+                        is_used=is_used,
+                        size=32,
+                    )
+                    
+                    cell_box = grid_flow.column(align=True)
                     row = cell_box.row(align=True)
-                    row.scale_y = 1.3
-                    # Operator button to select this swatch
+                    row.scale_y = 1.6
+                    row.scale_x = 1.0
+                    # Square button with custom swatch icon (color fill + active border + center used dot) and no number text
                     op = row.operator(
                         "voxel.select_palette_color",
-                        text=f"[{idx}]" if is_active else str(idx),
-                        icon='RADIOBUT_ON' if is_active else 'RADIOBUT_OFF',
+                        text="",
+                        icon_value=icon_id if icon_id != 0 else 0,
                     )
                     op.index = idx
 
