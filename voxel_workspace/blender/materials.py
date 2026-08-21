@@ -107,6 +107,28 @@ def refresh_palette_image(mesh: Any) -> None:
     img.update()
 
 
+def _disable_palette_emission(mat: Any) -> None:
+    """Unlink palette emission and force Emission Strength to 0."""
+    nt = getattr(mat, "node_tree", None)
+    if nt is None:
+        return
+    bs = None
+    for node in nt.nodes:
+        if node.bl_idname == "ShaderNodeBsdfPrincipled":
+            bs = node
+            break
+    if bs is None:
+        return
+    if "Emission Strength" in bs.inputs:
+        bs.inputs["Emission Strength"].default_value = 0.0
+    for sock_name in ("Emission Color", "Emission"):
+        if sock_name not in bs.inputs:
+            continue
+        sock = bs.inputs[sock_name]
+        for link in list(getattr(sock, "links", [])):
+            nt.links.remove(link)
+
+
 def get_or_create_palette_material(mesh: Any = None, pack_image: bool = True) -> Any:
     """Get or create the VoxelPaletteMaterial_<uuid> shader graph for a mesh (D6).
     
@@ -131,6 +153,7 @@ def get_or_create_palette_material(mesh: Any = None, pack_image: bool = True) ->
                 node = mat.node_tree.nodes[PALETTE_TEXTURE_NODE_NAME]
                 if node.bl_idname == "ShaderNodeTexImage":
                     node.image = palette_image
+                    _disable_palette_emission(mat)
                     return mat
             # A malformed/legacy UUID-owned material is rebuilt below. Do not
             # repurpose arbitrary image nodes as the palette texture node.
@@ -172,13 +195,8 @@ def get_or_create_palette_material(mesh: Any = None, pack_image: bool = True) ->
     nt.links.new(comb.outputs[0], tex.inputs["Vector"])
     nt.links.new(tex.outputs["Color"], bs.inputs["Base Color"])
 
-    # Emission gives engine-independent visible color while retaining Principled BSDF
-    if "Emission Color" in bs.inputs:
-        nt.links.new(tex.outputs["Color"], bs.inputs["Emission Color"])
-        bs.inputs["Emission Strength"].default_value = 1.0
-    elif "Emission" in bs.inputs:
-        nt.links.new(tex.outputs["Color"], bs.inputs["Emission"])
-        bs.inputs["Emission Strength"].default_value = 1.0
+    if "Emission Strength" in bs.inputs:
+        bs.inputs["Emission Strength"].default_value = 0.0
 
     bs.inputs["Roughness"].default_value = 1.0
     nt.links.new(bs.outputs["BSDF"], out.inputs["Surface"])

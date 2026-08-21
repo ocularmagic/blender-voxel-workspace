@@ -26,12 +26,17 @@ from .palette import (
     remap_volume_palette_indices,
     get_used_palette_counts,
 )
+from .import_glb import (
+    VOXEL_OT_import_glb,
+    IMPORT_GLB_OPERATOR_CLASSES,
+)
 
 OPERATOR_CLASSES: List[Type] = [
     VOXEL_OT_create_volume,
     *EDIT_SESSION_OPERATOR_CLASSES,
     *BRUSH_OPERATOR_CLASSES,
     *PALETTE_OPERATOR_CLASSES,
+    *IMPORT_GLB_OPERATOR_CLASSES,
 ]
 
 __all__ = [
@@ -48,6 +53,7 @@ __all__ = [
     "VOXEL_OT_compact_palette",
     "VOXEL_OT_save_palette_preset",
     "VOXEL_OT_load_palette_preset",
+    "VOXEL_OT_import_glb",
     "remap_volume_palette_indices",
     "get_used_palette_counts",
     "OPERATOR_CLASSES",

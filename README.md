@@ -12,6 +12,7 @@ Voxel Workspace is an installable Blender 5.1 extension for authoring independen
 - Per-brick, depth-aware GPU preview on OpenGL and Vulkan.
 - Depth-aware voxel cell outlines keep adjacent same-color voxels readable while editing.
 - Committed palette mesh geometry rendered by both EEVEE and Cycles.
+- **Import GLB into Volume** voxelizes a `.glb`/`.gltf` into the selected volume with a per-volume palette.
 
 Layers, selection, symmetry, `.vox` import/export, custom Workspace layouts, and other deferred tools are intentionally outside this vertical slice.
 
@@ -51,6 +52,15 @@ Open **3D Viewport → N-panel → Voxel**.
 7. MMB, wheel, numpad navigation, Ctrl+Z, and Ctrl+Shift+Z pass through to Blender.
 
 Use **Show Voxel Edges** in the Voxel Brush panel to toggle the editing outlines. This affects only the live editing preview, not EEVEE or Cycles renders.
+
+## Import GLB
+
+1. Select a voxel volume. The first version replaces an **empty** volume; a nonempty volume requires **Clear and Replace Volume** in the file dialog.
+2. In the Voxel panel click **Import GLB into Volume** and choose a `.glb` or `.gltf`.
+3. Default settings: contain-fit with 1 voxel of padding, center X/Y, rest on the volume floor, solid occupancy, 64-color palette.
+4. Confirm. The conversion is one Undo step. The generated palette is editable with Place/Erase.
+
+Open or non-manifold meshes fall back to a surface shell. Very large target grids (over 128³ cells) warn that conversion may be slow.
 
 Only one volume is actively edited at a time. Object transforms are honored because picking and preview operate in object-local voxel space.
 

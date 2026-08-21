@@ -17,6 +17,7 @@ Status: `untested` | `validated` | `partial` | `invalidated`
 | **D7** | Picking is **3D DDA in object-local space**; miss hits a work plane. Not `scene.ray_cast` as the production picker. | untested | later (not 001–003) |
 | **D8** | No custom `SpaceType` or `Object.mode`. “Voxel workspace” = **saved Workspace layout** + `WorkSpaceTool`s + `is_voxel_editing` flag. One volume edited at a time. | untested | later |
 | **D9** | Tools mutate only through **commands**. Identity is **UUID**, not object name. Rename preserves UUID; linked duplicate sharing the same mesh intentionally shares volume identity; plain `Shift+D` with copied data receives a new UUID (dedupe rule: same UUID + different data → regenerate). Undo/redo of duplication and cross-file append/link remain untested. | **partial (001)** | 001 PARTIAL verdict; lifecycle later |
+| **D10** | GLB/glTF import voxelizes with a **direct triangle occupancy classifier** (conservative center-to-triangle distance + outside flood-fill for solids), not Geometry Nodes Mesh-to-SDF-Grid and not the old GrokVoxConvert add-on. Fit is uniform contain with padding, centered X/Y, min-Z rest. Colors come from Principled base color / linked image UV samples, then `quantize_colors_median_cut`. The conversion is one explicit `undo_push`. Open meshes in solid mode fall back to shell. | **partial** | GLB import 2026-08-21 |
 
 ## Spike map
 

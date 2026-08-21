@@ -84,8 +84,13 @@ class VOXEL_PT_main_panel(Panel):
                     [k for k in mesh.keys() if k.startswith("vox_brick_") and not k.endswith("_len")]
                 )
             info_col.label(text=f"Occupied Bricks: {occupied_bricks}")
+            empty = occupied_bricks == 0
+            info_col.label(text="Volume is empty" if empty else "Volume has voxels")
+            import_row = vol_box.row()
+            import_row.scale_y = 1.2
+            import_row.operator("voxel.import_glb", text="Import GLB into Volume", icon="IMPORT")
         else:
-            vol_box.label(text="No active voxel volume", icon='INFO')
+            vol_box.label(text="No active voxel volume", icon="INFO")
 
         # 3. Dynamic Palette Section for Active Volume
         scene = context.scene
