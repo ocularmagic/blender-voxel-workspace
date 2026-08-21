@@ -73,6 +73,19 @@ from .material_domains import (
     reconcile_surface_slots,
     initialize_palette_entry,
 )
+from .volume_proxy import (
+    PROXY_OBJECT_FLAG,
+    PROXY_SOURCE_UUID_FLAG,
+    PROXY_PALETTE_INDEX_FLAG,
+    iter_primary_objects_for_mesh,
+    find_proxy,
+    ensure_proxy,
+    rebuild_proxy_geometry,
+    remove_proxy,
+    reconcile_volume_proxies,
+    reconcile_all_instances,
+    cleanup_stale_proxies,
+)
 from .mesh_sync import (
     sync_volume_mesh,
 )

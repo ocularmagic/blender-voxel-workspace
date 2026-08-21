@@ -78,6 +78,11 @@ def sync_volume_mesh(
     # Remesh target bricks
     s = grid.brick_size
     v_size = voxel_size
+    
+    # Exclude VOLUME indices from the primary surface mesh
+    from .material_domains import used_volume_indices
+    vol_indices = used_volume_indices(mesh, grid) if hasattr(mesh, "voxel_workspace") else []
+
     for coord in remesh_targets:
         brick = grid.bricks.get(coord)
         if brick is not None and np.any(brick):
@@ -87,7 +92,13 @@ def sync_volume_mesh(
                 float(coord[1] * s) * v_size,
                 float(coord[2] * s) * v_size,
             )
-            buf = mesher(apron, origin=origin, voxel_size=v_size, brick=brick)
+            buf = mesher(
+                apron,
+                origin=origin,
+                voxel_size=v_size,
+                brick=brick,
+                exclude_indices=vol_indices if vol_indices else None,
+            )
             if buf.quad_count > 0:
                 cpu_buffers[coord] = buf
             else:
@@ -176,6 +187,16 @@ def sync_volume_mesh(
         attr = mesh.attributes.new(name=PALETTE_ATTRIBUTE_NAME, type="INT", domain="CORNER")
 
     attr.data.foreach_set("value", corner_palette)
+
+    # Reconcile volume proxies for all primary objects sharing this mesh
+    from .volume_proxy import reconcile_all_instances
+    reconcile_all_instances(
+        mesh,
+        grid,
+        volume_entry=entry,
+        dirty_bricks=dirty_bricks if dirty_only else None,
+        voxel_size=voxel_size,
+    )
 
     mesh.update()
     return cpu_buffers

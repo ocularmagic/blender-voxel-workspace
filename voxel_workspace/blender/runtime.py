@@ -24,6 +24,7 @@ class VoxelVolumeEntry:
     cpu_buffers: Dict[BrickCoord, MeshBuffers] = field(default_factory=dict)
     gpu_batches: Dict[BrickCoord, Any] = field(default_factory=dict)
     gpu_edge_batches: Dict[BrickCoord, Any] = field(default_factory=dict)
+    volume_proxy_buffers: Dict[int, Dict[BrickCoord, MeshBuffers]] = field(default_factory=dict)
     dirty_bricks: Set[BrickCoord] = field(default_factory=set)
     voxel_size: float = 1.0
     palette_lut: Optional[np.ndarray] = None
@@ -243,7 +244,10 @@ def reconcile_all_palette_caches(pack_images: bool = False) -> None:
     from .properties import ensure_palette, migrate_native_material_domains
     from .material_domains import reconcile_surface_slots
     from .materials import ensure_voxel_material, refresh_palette_image
+    from .volume_proxy import reconcile_all_instances, cleanup_stale_proxies
     from .gpu_preview import drop_palette_lut
+
+    cleanup_stale_proxies()
 
     for mesh in bpy.data.meshes:
         if hasattr(mesh, "voxel_workspace") and mesh.voxel_workspace.is_voxel_mesh:
@@ -251,11 +255,12 @@ def reconcile_all_palette_caches(pack_images: bool = False) -> None:
                 ensure_palette(mesh)
             migrate_native_material_domains(mesh)
             
-            # Reconcile primary surface slots if runtime volume exists
+            # Reconcile primary surface slots & volume proxies if runtime volume exists
             vol_uuid = mesh.voxel_workspace.uuid
             entry = get_volume(vol_uuid)
             if entry is not None and entry.grid is not None:
                 reconcile_surface_slots(mesh, entry.grid)
+                reconcile_all_instances(mesh, entry.grid, volume_entry=entry)
 
             ensure_voxel_material(mesh, pack_image=pack_images)
             if not pack_images:
