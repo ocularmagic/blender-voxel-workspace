@@ -114,8 +114,14 @@ def sync_volume_mesh(
     # Clear geometry while preserving IDProperties and datablock identity
     mesh.clear_geometry()
 
+    # Reconcile native surface material slots
+    from .material_domains import reconcile_surface_slots
+    slot_map = reconcile_surface_slots(mesh, grid)
+
     if ensure_material:
-        ensure_voxel_material(mesh)
+        # If no surface slots created (e.g. legacy/fallback), ensure legacy material
+        if len(mesh.materials) == 0:
+            ensure_voxel_material(mesh)
 
     if not all_positions or vert_offset == 0:
         mesh.update()
@@ -135,6 +141,23 @@ def sync_volume_mesh(
     # Map each corner loop to the palette index of its referenced vertex
     corner_palette = palette_per_vert[loop_vertex_indices].astype(np.int32)
 
+    # Triangle palette index is the palette index of its first vertex
+    tri_first_vert_indices = indices[:, 0]
+    tri_palette_indices = palette_per_vert[tri_first_vert_indices].astype(np.int32)
+
+    # Map each triangle to its corresponding material slot
+    if slot_map:
+        # Vectorized lookup via mapping array
+        max_pal_idx = int(np.max(tri_palette_indices)) if len(tri_palette_indices) > 0 else 0
+        lut_size = max(256, max_pal_idx + 1)
+        slot_lut = np.zeros(lut_size, dtype=np.int32)
+        for pal_idx, slot_idx in slot_map.items():
+            if pal_idx < lut_size:
+                slot_lut[pal_idx] = slot_idx
+        tri_material_slots = slot_lut[tri_palette_indices]
+    else:
+        tri_material_slots = np.zeros(total_tris, dtype=np.int32)
+
     # Bulk datablock write using foreach_set
     mesh.vertices.add(total_verts)
     mesh.vertices.foreach_set("co", positions.ravel())
@@ -145,6 +168,7 @@ def sync_volume_mesh(
     mesh.polygons.add(total_tris)
     mesh.polygons.foreach_set("loop_start", np.arange(0, total_loops, 3, dtype=np.int32))
     mesh.polygons.foreach_set("loop_total", np.full(total_tris, 3, dtype=np.int32))
+    mesh.polygons.foreach_set("material_index", tri_material_slots)
 
     # Create/update CORNER INT palette_index attribute
     attr = mesh.attributes.get(PALETTE_ATTRIBUTE_NAME)
