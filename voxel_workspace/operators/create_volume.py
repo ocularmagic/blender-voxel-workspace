@@ -32,21 +32,21 @@ class VOXEL_OT_create_volume(Operator):
         size_x: IntProperty(
             name="Size X",
             description="X dimension in voxels",
-            default=32,
+            default=16,
             min=1,
             max=512,
         )
         size_y: IntProperty(
             name="Size Y",
             description="Y dimension in voxels",
-            default=32,
+            default=16,
             min=1,
             max=512,
         )
         size_z: IntProperty(
             name="Size Z",
             description="Z dimension in voxels",
-            default=32,
+            default=16,
             min=1,
             max=512,
         )
@@ -61,14 +61,6 @@ class VOXEL_OT_create_volume(Operator):
         if bpy is None or context is None:
             return {'CANCELLED'}
 
-        # Warn if dimensions are not multiples of 32
-        if (self.size_x % 32 != 0) or (self.size_y % 32 != 0) or (self.size_z % 32 != 0):
-            self.report(
-                {'WARNING'},
-                f"Volume dimensions ({self.size_x}, {self.size_y}, {self.size_z}) "
-                "are not multiples of 32; brick boundaries are bounded to extent.",
-            )
-
         # 1. Create Mesh and Object datablocks
         mesh = bpy.data.meshes.new(name="VoxelVolume")
         obj = bpy.data.objects.new(name="VoxelVolume", object_data=mesh)
@@ -81,9 +73,19 @@ class VOXEL_OT_create_volume(Operator):
         if collection is not None:
             collection.objects.link(obj)
 
-        # 2. Attach schema/UUID/extent metadata
-        extent_min = (0, 0, 0)
-        extent_max = (int(self.size_x), int(self.size_y), int(self.size_z))
+        # 2. Attach schema/UUID/extent metadata with origin at bottom-plane center
+        sx = int(self.size_x)
+        sy = int(self.size_y)
+        sz = int(self.size_z)
+        min_x = -(sx // 2)
+        max_x = min_x + sx
+        min_y = -(sy // 2)
+        max_y = min_y + sy
+        min_z = 0
+        max_z = sz
+
+        extent_min = (min_x, min_y, min_z)
+        extent_max = (max_x, max_y, max_z)
         v_size = float(self.voxel_size)
 
         uuid_str = init_voxel_mesh_properties(

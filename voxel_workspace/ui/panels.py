@@ -27,9 +27,25 @@ class VOXEL_PT_main_panel(Panel):
             return
 
         # 1. Volume Creation Section
+        scene = context.scene
         create_box = layout.box()
-        create_box.label(text="Creation", icon='PLUS')
-        create_box.operator("voxel.create_volume", text="Create Volume", icon='ADD')
+        create_box.label(text="Create Volume", icon='CUBE')
+        if scene is not None and hasattr(scene, "voxel_workspace"):
+            sc_props = scene.voxel_workspace
+            col_dims = create_box.column(align=True)
+            row_xyz = col_dims.row(align=True)
+            row_xyz.prop(sc_props, "create_size_x", text="X")
+            row_xyz.prop(sc_props, "create_size_y", text="Y")
+            row_xyz.prop(sc_props, "create_size_z", text="Z")
+            col_dims.prop(sc_props, "create_voxel_size", text="Voxel Size")
+
+            op = create_box.operator("voxel.create_volume", text="Create Volume", icon='ADD')
+            op.size_x = sc_props.create_size_x
+            op.size_y = sc_props.create_size_y
+            op.size_z = sc_props.create_size_z
+            op.voxel_size = sc_props.create_voxel_size
+        else:
+            create_box.operator("voxel.create_volume", text="Create Volume", icon='ADD')
 
         # 2. Active Volume Context & Inspection
         obj = context.active_object

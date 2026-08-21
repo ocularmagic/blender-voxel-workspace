@@ -174,6 +174,33 @@ class VoxelObjectProperties(PropertyGroup):
 class VoxelSceneProperties(PropertyGroup):
     """Scene-level voxel interaction properties."""
     if bpy is not None:
+        create_size_x: IntProperty(
+            name="Size X",
+            description="Default X dimension in voxels for new volumes",
+            default=16,
+            min=1,
+            max=512,
+        )
+        create_size_y: IntProperty(
+            name="Size Y",
+            description="Default Y dimension in voxels for new volumes",
+            default=16,
+            min=1,
+            max=512,
+        )
+        create_size_z: IntProperty(
+            name="Size Z",
+            description="Default Z dimension in voxels for new volumes",
+            default=16,
+            min=1,
+            max=512,
+        )
+        create_voxel_size: FloatProperty(
+            name="Voxel Size",
+            description="Default world-space edge length of a single voxel for new volumes",
+            default=1.0,
+            min=0.0001,
+        )
         active_palette_index: IntProperty(
             name="Active Palette Index",
             description="Stored color index used by the voxel brush",
