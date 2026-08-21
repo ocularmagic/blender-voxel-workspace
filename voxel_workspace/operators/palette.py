@@ -471,6 +471,10 @@ class VOXEL_OT_eyedropper(Operator):
         if event.type in {'RIGHTMOUSE', 'ESC'}:
             return self._finish(context, {'CANCELLED'})
 
+        if event.type in {'MOUSEMOVE', 'INBETWEEN_MOUSEMOVE'}:
+            context.window.cursor_set('EYEDROPPER')
+            return {'PASS_THROUGH'}
+
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             obj = context.active_object
             if obj is not None and hasattr(obj.data, "voxel_workspace"):
