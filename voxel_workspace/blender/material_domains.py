@@ -1,0 +1,315 @@
+"""Native Blender Material lifecycle and domain management for voxel volumes."""
+from typing import Any, Dict, List, Optional, Set, Tuple
+import uuid
+
+try:
+    import bpy
+    from bpy.types import Material, Mesh
+except ImportError:
+    bpy = None
+    Material = Mesh = object
+
+from ..constants import DEFAULT_PALETTE
+
+
+# Generated material kinds
+SURFACE_DEFAULT = "SURFACE_DEFAULT"
+VOLUME_DEFAULT = "VOLUME_DEFAULT"
+
+
+def create_default_surface_material(
+    mesh: Any,
+    entry: Any,
+    base_color: Optional[Tuple[float, float, float, float]] = None,
+) -> Any:
+    """Create a new native Blender surface Material with Principled BSDF."""
+    if bpy is None:
+        return None
+
+    mesh_uuid = getattr(mesh.voxel_workspace, "uuid", "unknown") if mesh and hasattr(mesh, "voxel_workspace") else "unknown"
+    idx = getattr(entry, "index", 1) if entry else 1
+    name = getattr(entry, "name", "") or f"Color {idx}"
+    mat_name = f"VoxelSurface_{name}_{idx}"
+
+    mat = bpy.data.materials.new(name=mat_name)
+    mat.use_nodes = True
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+
+    # Standard Principled setup
+    bsdf = nodes.get("Principled BSDF")
+    if bsdf is None:
+        nodes.clear()
+        out = nodes.new("ShaderNodeOutputMaterial")
+        bsdf = nodes.new("ShaderNodeBsdfPrincipled")
+        links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+
+    col = base_color or (tuple(entry.color) if entry else (0.5, 0.5, 0.5, 1.0))
+    if "Base Color" in bsdf.inputs:
+        bsdf.inputs["Base Color"].default_value = (float(col[0]), float(col[1]), float(col[2]), 1.0)
+    if "Alpha" in bsdf.inputs:
+        bsdf.inputs["Alpha"].default_value = float(col[3]) if len(col) > 3 else 1.0
+    if "Roughness" in bsdf.inputs:
+        bsdf.inputs["Roughness"].default_value = 1.0  # HEAD compatibility
+
+    # Tag custom metadata
+    mat["voxel_workspace_owned"] = True
+    mat["voxel_workspace_owner_uuid"] = mesh_uuid
+    mat["voxel_workspace_material_uid"] = str(uuid.uuid4())
+    mat["voxel_workspace_generated_kind"] = SURFACE_DEFAULT
+
+    return mat
+
+
+def create_default_volume_material(
+    mesh: Any,
+    entry: Any,
+    volume_color: Optional[Tuple[float, float, float, float]] = None,
+    density: float = 5.0,
+) -> Any:
+    """Create a new native Blender volume Material with Principled Volume."""
+    if bpy is None:
+        return None
+
+    mesh_uuid = getattr(mesh.voxel_workspace, "uuid", "unknown") if mesh and hasattr(mesh, "voxel_workspace") else "unknown"
+    idx = getattr(entry, "index", 1) if entry else 1
+    name = getattr(entry, "name", "") or f"Color {idx}"
+    mat_name = f"VoxelVolume_{name}_{idx}"
+
+    mat = bpy.data.materials.new(name=mat_name)
+    mat.use_nodes = True
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    nodes.clear()
+
+    out = nodes.new("ShaderNodeOutputMaterial")
+    p_vol = nodes.new("ShaderNodeVolumePrincipled")
+    links.new(p_vol.outputs["Volume"], out.inputs["Volume"])
+
+    col = volume_color or (tuple(entry.color) if entry else (0.2, 0.7, 1.0, 1.0))
+    if "Color" in p_vol.inputs:
+        p_vol.inputs["Color"].default_value = (float(col[0]), float(col[1]), float(col[2]), 1.0)
+    if "Density" in p_vol.inputs:
+        p_vol.inputs["Density"].default_value = float(density)
+
+    # Tag custom metadata
+    mat["voxel_workspace_owned"] = True
+    mat["voxel_workspace_owner_uuid"] = mesh_uuid
+    mat["voxel_workspace_material_uid"] = str(uuid.uuid4())
+    mat["voxel_workspace_generated_kind"] = VOLUME_DEFAULT
+
+    return mat
+
+
+def ensure_entry_material(mesh: Any, entry: Any) -> Any:
+    """Ensure a palette entry has a valid native Material bound according to its domain."""
+    if bpy is None or entry is None:
+        return None
+
+    domain = getattr(entry, "material_domain", "SURFACE")
+    mat = getattr(entry, "material", None)
+
+    if mat is None:
+        if domain == "VOLUME":
+            mat = create_default_volume_material(mesh, entry)
+        else:
+            mat = create_default_surface_material(mesh, entry)
+        entry.material = mat
+        entry.material_owned = True
+
+    return mat
+
+
+def copy_entry_material_for_mesh(src_entry: Any, dst_entry: Any, new_mesh_uuid: str) -> None:
+    """Copy an entry's material when duplicating or forking a mesh."""
+    if bpy is None or src_entry is None or dst_entry is None:
+        return
+
+    dst_entry.material_domain = getattr(src_entry, "material_domain", "SURFACE")
+    dst_entry.material_owned = getattr(src_entry, "material_owned", True)
+    src_mat = getattr(src_entry, "material", None)
+
+    if src_mat is None:
+        dst_entry.material = None
+        return
+
+    if getattr(src_entry, "material_owned", True):
+        # Fork owned material
+        new_mat = src_mat.copy()
+        new_mat["voxel_workspace_owned"] = True
+        new_mat["voxel_workspace_owner_uuid"] = new_mesh_uuid
+        new_mat["voxel_workspace_material_uid"] = str(uuid.uuid4())
+        dst_entry.material = new_mat
+    else:
+        # External shared material: share pointer directly
+        dst_entry.material = src_mat
+
+
+def assign_external_material(entry: Any, material: Any) -> None:
+    """Assign an external/shared Blender material to a palette entry."""
+    if entry is None:
+        return
+    entry.material = material
+    entry.material_owned = False
+
+
+def make_entry_material_single_user(mesh: Any, entry: Any) -> Any:
+    """Make an entry's material single-user (owned by this mesh)."""
+    if bpy is None or entry is None:
+        return None
+    curr_mat = getattr(entry, "material", None)
+    mesh_uuid = getattr(mesh.voxel_workspace, "uuid", "unknown") if mesh and hasattr(mesh, "voxel_workspace") else "unknown"
+
+    if curr_mat is None:
+        return ensure_entry_material(mesh, entry)
+
+    new_mat = curr_mat.copy()
+    new_mat["voxel_workspace_owned"] = True
+    new_mat["voxel_workspace_owner_uuid"] = mesh_uuid
+    new_mat["voxel_workspace_material_uid"] = str(uuid.uuid4())
+    entry.material = new_mat
+    entry.material_owned = True
+    return new_mat
+
+
+def is_owned_material(material: Any, mesh_uuid: str) -> bool:
+    """Check if a material is owned by the specified mesh UUID."""
+    if material is None:
+        return False
+    return (
+        material.get("voxel_workspace_owned", False)
+        and material.get("voxel_workspace_owner_uuid", "") == mesh_uuid
+    )
+
+
+def remove_owned_material_if_unreferenced(material: Any) -> bool:
+    """Remove an owned material if it has no users/references."""
+    if bpy is None or material is None:
+        return False
+    if not material.get("voxel_workspace_owned", False):
+        return False
+
+    # Check Blender users
+    if material.users == 0:
+        bpy.data.materials.remove(material)
+        return True
+    return False
+
+
+def set_generated_surface_base_color(entry: Any, color: Optional[Tuple[float, float, float, float]] = None) -> bool:
+    """Update base color on a generated Principled BSDF node if present."""
+    if entry is None or entry.material is None:
+        return False
+    mat = entry.material
+    if not mat.use_nodes or mat.node_tree is None:
+        return False
+
+    col = color or tuple(entry.color)
+    bsdf = mat.node_tree.nodes.get("Principled BSDF")
+    if bsdf and "Base Color" in bsdf.inputs:
+        bsdf.inputs["Base Color"].default_value = (float(col[0]), float(col[1]), float(col[2]), 1.0)
+        if "Alpha" in bsdf.inputs and len(col) > 3:
+            bsdf.inputs["Alpha"].default_value = float(col[3])
+        return True
+    return False
+
+
+def allocated_entries(mesh: Any) -> List[Any]:
+    """Return all allocated non-zero palette entries on a mesh."""
+    if mesh is None or not hasattr(mesh, "voxel_workspace"):
+        return []
+    props = mesh.voxel_workspace
+    return sorted([e for e in props.palette if e.index > 0], key=lambda e: e.index)
+
+
+def used_palette_indices(grid: Any) -> Set[int]:
+    """Return the set of all non-zero palette indices used across all bricks in a grid."""
+    if grid is None:
+        return set()
+    used = set()
+    import numpy as np
+    for brick in grid.bricks.values():
+        if np.any(brick):
+            unq = np.unique(brick)
+            used.update(int(x) for x in unq if x > 0)
+    return used
+
+
+def used_surface_indices(mesh: Any, grid: Any) -> List[int]:
+    """Return sorted list of used palette indices that belong to the SURFACE domain."""
+    used = used_palette_indices(grid)
+    if not used or mesh is None or not hasattr(mesh, "voxel_workspace"):
+        return sorted(list(used))
+    
+    props = mesh.voxel_workspace
+    entry_domain_map = {e.index: getattr(e, "material_domain", "SURFACE") for e in props.palette}
+    surface_used = [idx for idx in used if entry_domain_map.get(idx, "SURFACE") == "SURFACE"]
+    return sorted(surface_used)
+
+
+def used_volume_indices(mesh: Any, grid: Any) -> List[int]:
+    """Return sorted list of used palette indices that belong to the VOLUME domain."""
+    used = used_palette_indices(grid)
+    if not used or mesh is None or not hasattr(mesh, "voxel_workspace"):
+        return []
+    
+    props = mesh.voxel_workspace
+    entry_domain_map = {e.index: getattr(e, "material_domain", "SURFACE") for e in props.palette}
+    volume_used = [idx for idx in used if entry_domain_map.get(idx, "SURFACE") == "VOLUME"]
+    return sorted(volume_used)
+
+
+def reconcile_surface_slots(mesh: Any, grid: Any) -> Dict[int, int]:
+    """Reconcile the primary Mesh material slots for all used SURFACE palette indices.
+    
+    Returns a dictionary mapping `palette_index -> material_slot_index`.
+    """
+    if bpy is None or mesh is None:
+        return {}
+
+    props = mesh.voxel_workspace if hasattr(mesh, "voxel_workspace") else None
+    surface_indices = used_surface_indices(mesh, grid)
+    slot_map: Dict[int, int] = {}
+
+    if not surface_indices:
+        # No surface voxels used; clear materials
+        mesh.materials.clear()
+        return slot_map
+
+    # Build entry lookup
+    palette_lookup = {e.index: e for e in props.palette} if props else {}
+
+    # Clear and populate slots in deterministic sorted order
+    mesh.materials.clear()
+    for slot_idx, pal_idx in enumerate(surface_indices):
+        entry = palette_lookup.get(pal_idx)
+        mat = ensure_entry_material(mesh, entry) if entry else None
+        if mat is None:
+            # Fallback default surface material if entry missing
+            mat = bpy.data.materials.new(name=f"VoxelSurface_Fallback_{pal_idx}")
+            mat.use_nodes = True
+        mesh.materials.append(mat)
+        slot_map[pal_idx] = slot_idx
+
+    return slot_map
+
+
+def initialize_palette_entry(
+    mesh: Any,
+    entry: Any,
+    index: int,
+    name: str,
+    color: Tuple[float, float, float, float],
+    domain: str = "SURFACE",
+) -> None:
+    """Initialize a palette entry with given properties and an owned native material."""
+    entry.index = index
+    entry.name = name
+    entry.color = color
+    entry.material_domain = domain
+    entry.material_owned = True
+
+    if domain == "VOLUME":
+        entry.material = create_default_volume_material(mesh, entry, volume_color=color)
+    else:
+        entry.material = create_default_surface_material(mesh, entry, base_color=color)

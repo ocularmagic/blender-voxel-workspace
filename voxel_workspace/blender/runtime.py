@@ -171,6 +171,13 @@ def deduplicate_mesh_uuids(scene=None, depsgraph=None) -> List[Tuple[Any, str, s
                 mesh.voxel_workspace.uuid = new_uuid
 
                 # Fork palette datablocks for the duplicated mesh
+                props = mesh.voxel_workspace
+                if hasattr(props, "palette"):
+                    from .material_domains import copy_entry_material_for_mesh
+                    for entry in props.palette:
+                        if entry.index > 0:
+                            copy_entry_material_for_mesh(entry, entry, new_uuid)
+
                 from .materials import (
                     get_or_create_palette_material,
                     get_or_create_palette_image,

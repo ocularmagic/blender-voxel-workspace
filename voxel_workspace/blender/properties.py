@@ -82,13 +82,32 @@ class VoxelPaletteEntry(PropertyGroup):
         )
         color: FloatVectorProperty(
             name="Color",
-            description="Linear RGBA color for this palette entry",
+            description="Linear RGBA display color for this palette entry",
             size=4,
             subtype='COLOR',
             default=(1.0, 1.0, 1.0, 1.0),
             min=0.0,
             max=1.0,
             update=_palette_color_updated,
+        )
+        material_domain: EnumProperty(
+            name="Material Domain",
+            description="Render domain for voxels using this palette entry",
+            items=[
+                ("SURFACE", "Surface", "Rendered through material slots on primary surface mesh"),
+                ("VOLUME", "Volume", "Rendered through a closed proxy object with volume shader"),
+            ],
+            default="SURFACE",
+        )
+        material: PointerProperty(
+            type=bpy.types.Material,
+            name="Material",
+            description="Native Blender material bound to this palette entry",
+        )
+        material_owned: BoolProperty(
+            name="Material Owned",
+            description="True if this material was generated specifically for this volume and should be forked on copy",
+            default=True,
         )
 
 
@@ -103,7 +122,7 @@ class VoxelMeshProperties(PropertyGroup):
         palette_schema_version: IntProperty(
             name="Palette Schema Version",
             description="Version of the palette schema",
-            default=1,
+            default=2,
         )
         palette_index_bits: IntProperty(
             name="Palette Index Bits",
@@ -257,11 +276,15 @@ def ensure_palette(mesh: Any) -> None:
     if len(props.palette) > 0:
         return
 
+    from .material_domains import initialize_palette_entry
+
     # Check index 0 (reserved empty)
     item = props.palette.add()
     item.index = 0
     item.name = "Empty"
     item.color = DEFAULT_PALETTE[0]
+    item.material_domain = "SURFACE"
+    item.material_owned = True
 
     # Populate default indices 1..8
     default_names = {
@@ -276,9 +299,9 @@ def ensure_palette(mesh: Any) -> None:
     }
     for idx in range(1, len(DEFAULT_PALETTE)):
         item = props.palette.add()
-        item.index = idx
-        item.name = default_names.get(idx, f"Color {idx}")
-        item.color = DEFAULT_PALETTE[idx]
+        name = default_names.get(idx, f"Color {idx}")
+        color = DEFAULT_PALETTE[idx]
+        initialize_palette_entry(mesh, item, index=idx, name=name, color=color, domain="SURFACE")
 
 
 def init_voxel_mesh_properties(
