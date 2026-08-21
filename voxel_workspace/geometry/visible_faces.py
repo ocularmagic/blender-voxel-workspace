@@ -1,7 +1,8 @@
-from typing import Optional, Tuple
+from typing import Collection, Optional, Tuple
 import numpy as np
 
 from .buffers import MeshBuffers
+from .material_filter import filter_brick_and_apron
 
 FACE_SPECS: list[Tuple[int, int, np.ndarray]] = [
     # (axis, sgn, quad_template_ccw_outward)
@@ -19,6 +20,8 @@ def mesh_visible_faces(
     origin: Tuple[float, float, float] = (0.0, 0.0, 0.0),
     voxel_size: float = 1.0,
     brick: Optional[np.ndarray] = None,
+    exclude_indices: Optional[Collection[int]] = None,
+    only_index: Optional[int] = None,
 ) -> MeshBuffers:
     """Generate mesh buffers from a brick's 1-voxel padded apron using vectorized visible-face extraction.
 
@@ -27,11 +30,20 @@ def mesh_visible_faces(
         origin: World/object space offset of the brick's (0, 0, 0) local coordinate.
         voxel_size: Edge length of a voxel in 3D units.
         brick: Optional owning brick array. If omitted, apron[1:-1, 1:-1, 1:-1] is used.
+        exclude_indices: Optional indices to exclude from meshing (e.g. VOLUME domain).
+        only_index: Optional index to isolate (e.g. single VOLUME proxy domain).
 
     Returns:
         MeshBuffers with float32 positions, int32 triangle indices, int32 corner palette indices, and quad_count.
     """
-    core = brick if brick is not None else apron[1:-1, 1:-1, 1:-1]
+    raw_core = brick if brick is not None else apron[1:-1, 1:-1, 1:-1]
+    core, apron = filter_brick_and_apron(
+        raw_core,
+        apron,
+        exclude_indices=exclude_indices,
+        only_index=only_index,
+    )
+
     if not np.any(core):
         return MeshBuffers(
             positions=np.empty((0, 3), dtype=np.float32),
