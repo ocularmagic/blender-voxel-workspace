@@ -20,6 +20,12 @@ from ..blender.runtime import (
 )
 
 
+def _request_brush_stop() -> None:
+    """Invalidate any running voxel brush before changing edit sessions."""
+    from .brush import request_brush_modal_stop
+    request_brush_modal_stop()
+
+
 def is_valid_voxel_object(obj: Any) -> bool:
     """Check if an object is a valid voxel volume mesh datablock."""
     return bool(
@@ -56,6 +62,7 @@ class VOXEL_OT_start_place(Operator):
             return {'CANCELLED'}
 
         vol_uuid = obj.data.voxel_workspace.uuid
+        _request_brush_stop()
         stop_editing(context)
         start_editing(vol_uuid, context)
         context.scene.voxel_workspace.active_tool = 'PLACE'
@@ -93,6 +100,7 @@ class VOXEL_OT_start_erase(Operator):
             return {'CANCELLED'}
 
         vol_uuid = obj.data.voxel_workspace.uuid
+        _request_brush_stop()
         stop_editing(context)
         start_editing(vol_uuid, context)
         context.scene.voxel_workspace.active_tool = 'ERASE'
@@ -117,6 +125,7 @@ class VOXEL_OT_stop_editing(Operator):
     def execute(self, context: Any) -> set:
         if bpy is None:
             return {'CANCELLED'}
+        _request_brush_stop()
         stop_editing(context)
         return {'FINISHED'}
 

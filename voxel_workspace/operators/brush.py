@@ -37,6 +37,57 @@ from ..blender.mesh_sync import sync_volume_mesh
 from ..geometry.visible_faces import mesh_visible_faces
 
 
+_BRUSH_MODAL_GENERATION = 0
+
+
+def begin_brush_modal_session() -> int:
+    """Invalidate older brush handlers and return a token for the new modal."""
+    global _BRUSH_MODAL_GENERATION
+    _BRUSH_MODAL_GENERATION += 1
+    return _BRUSH_MODAL_GENERATION
+
+
+def request_brush_modal_stop() -> None:
+    """Invalidate the currently registered brush modal on its next event."""
+    global _BRUSH_MODAL_GENERATION
+    _BRUSH_MODAL_GENERATION += 1
+
+
+def is_event_over_ui_region(context: Any, event: Any) -> bool:
+    """Return True when a modal event belongs to UI rather than a 3D WINDOW."""
+    context_region = getattr(context, "region", None)
+    if context_region is not None and getattr(context_region, "type", None) != 'WINDOW':
+        return True
+    # Background projection/event coordinates are intentionally synthetic and
+    # may fall outside the viewport; its harness supplies the WINDOW context.
+    if bpy is not None and bpy.app.background:
+        return False
+
+    screen = getattr(context, "screen", None)
+    mouse_x = getattr(event, "mouse_x", -1)
+    mouse_y = getattr(event, "mouse_y", -1)
+    if screen is None or mouse_x < 0 or mouse_y < 0:
+        return False
+
+    for area in screen.areas:
+        if not (area.x <= mouse_x < area.x + area.width and area.y <= mouse_y < area.y + area.height):
+            continue
+        if area.type != 'VIEW_3D':
+            return True
+        # Sidebars/toolbars can overlap the WINDOW region in screen space, so
+        # test every visible non-WINDOW region before accepting viewport input.
+        for region in area.regions:
+            if region.type == 'WINDOW' or region.width <= 1 or region.height <= 1:
+                continue
+            if (
+                region.x <= mouse_x < region.x + region.width
+                and region.y <= mouse_y < region.y + region.height
+            ):
+                return True
+        return False
+    return True
+
+
 def snapshot_grid(grid):
     """Copy cells used for stable Place picking during one stroke."""
     from ..core.grid import VoxelGrid
@@ -65,13 +116,19 @@ def is_valid_voxel_object(obj: Any) -> bool:
 class BrushSession:
     """Core state machine and raycast/stroke engine for modal voxel painting/erasing."""
 
-    def __init__(self, mode: str = "PLACE", volume_uuid: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        mode: str = "PLACE",
+        volume_uuid: Optional[str] = None,
+        modal_token: Optional[int] = None,
+    ) -> None:
         self.mode: str = mode
         self.volume_uuid: Optional[str] = volume_uuid or get_active_volume_uuid()
         self.is_dragging: bool = False
         self.stroke: Optional[VoxelStroke] = None
         self.last_target: Optional[VoxelCoord] = None
         self.pick_grid = None
+        self.modal_token = modal_token
 
     def resolve_view3d_region(
         self, context: Any, event: Any
@@ -177,11 +234,20 @@ class BrushSession:
         if bpy is None:
             return {'CANCELLED'}
 
+        if self.modal_token is not None and self.modal_token != _BRUSH_MODAL_GENERATION:
+            self.cleanup(get_volume(self.volume_uuid) if self.volume_uuid else None)
+            return {'FINISHED'}
+
         # 1. Check volume validity and session state
         active_uuid = get_active_volume_uuid()
         if not active_uuid or active_uuid != self.volume_uuid:
-            self.cleanup()
+            self.cleanup(get_volume(self.volume_uuid) if self.volume_uuid else None)
             return {'FINISHED'}
+
+        # Never consume events delivered to sidebars, toolbars, headers, or
+        # other editors. Their operators must remain usable during voxel edit.
+        if is_event_over_ui_region(context, event):
+            return {'PASS_THROUGH'}
 
         obj = context.active_object
         if (
@@ -408,7 +474,12 @@ class VOXEL_OT_brush(Operator):
                 self.report({'WARNING'}, "No active voxel volume for brush")
                 return {'CANCELLED'}
 
-        self.session = BrushSession(mode=self.mode, volume_uuid=active_uuid)
+        modal_token = begin_brush_modal_session()
+        self.session = BrushSession(
+            mode=self.mode,
+            volume_uuid=active_uuid,
+            modal_token=modal_token,
+        )
         context.scene.voxel_workspace.active_tool = self.mode
         context.window_manager.modal_handler_add(self)
         tag_redraw_all_viewports()
