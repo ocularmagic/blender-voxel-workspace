@@ -37,7 +37,7 @@ def quantize_colors_median_cut(
     
     Parameters:
         colors_rgba_linear: (N, 4) array-like of float linear RGBA [0.0..1.0].
-        max_colors: Maximum number of colors in resulting palette (1..255).
+        max_colors: Maximum number of colors in resulting palette (1..4096).
         weights: Optional frequency weights for each sample.
         alpha_threshold: Samples with alpha < alpha_threshold are treated as empty (index 0).
         
@@ -49,8 +49,6 @@ def quantize_colors_median_cut(
     """
     if max_colors < 1:
         max_colors = 1
-    if max_colors > 255:
-        max_colors = 255
 
     arr = np.ascontiguousarray(colors_rgba_linear, dtype=np.float32)
     if arr.ndim == 1:
