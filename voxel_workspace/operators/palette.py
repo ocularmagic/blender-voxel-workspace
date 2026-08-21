@@ -447,6 +447,11 @@ class VOXEL_OT_eyedropper(Operator):
     bl_description = "Pick palette color from clicked voxel (or press 'I' / Alt+LMB while editing)"
     bl_options = {'REGISTER'}
 
+    def _finish(self, context, result):
+        """Restore the normal cursor before terminating the sampling session."""
+        context.window.cursor_set('DEFAULT')
+        return result
+
     def invoke(self, context, event):
         obj = context.active_object
         if obj is None or obj.type != 'MESH' or not hasattr(obj.data, "voxel_workspace"):
@@ -459,11 +464,12 @@ class VOXEL_OT_eyedropper(Operator):
 
         # Modal sample on click
         context.window_manager.modal_handler_add(self)
+        context.window.cursor_set('EYEDROPPER')
         return {'RUNNING_MODAL'}
 
     def modal(self, context, event):
         if event.type in {'RIGHTMOUSE', 'ESC'}:
-            return {'CANCELLED'}
+            return self._finish(context, {'CANCELLED'})
 
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             obj = context.active_object
@@ -496,10 +502,10 @@ class VOXEL_OT_eyedropper(Operator):
                                             if 1 <= picked_index <= 8:
                                                 context.scene.voxel_workspace.active_palette_choice = str(picked_index)
                                             tag_redraw_all_viewports()
-                                            return {'FINISHED'}
+                                            return self._finish(context, {'FINISHED'})
                     except Exception:
                         pass
-            return {'CANCELLED'}
+            return self._finish(context, {'CANCELLED'})
 
         return {'PASS_THROUGH'}
 
