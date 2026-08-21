@@ -242,6 +242,7 @@ def reconcile_all_palette_caches(pack_images: bool = False) -> None:
         return
     from .properties import ensure_palette, migrate_native_material_domains
     from .material_domains import reconcile_surface_slots
+    from .materials import ensure_voxel_material, refresh_palette_image
     from .gpu_preview import drop_palette_lut
 
     for mesh in bpy.data.meshes:
@@ -255,6 +256,10 @@ def reconcile_all_palette_caches(pack_images: bool = False) -> None:
             entry = get_volume(vol_uuid)
             if entry is not None and entry.grid is not None:
                 reconcile_surface_slots(mesh, entry.grid)
+
+            ensure_voxel_material(mesh, pack_image=pack_images)
+            if not pack_images:
+                refresh_palette_image(mesh)
 
             drop_palette_lut(mesh.voxel_workspace.uuid)
 

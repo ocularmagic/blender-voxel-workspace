@@ -163,6 +163,22 @@ class VOXEL_PT_main_panel(Panel):
                     edit_box.prop(active_entry, "color", text="")
                     edit_box.prop(active_entry, "name", text="Name")
 
+                    # Native Material Controls
+                    mat_box = edit_box.box()
+                    mat_box.label(text="Native Blender Material", icon='MATERIAL')
+                    mat_box.prop(active_entry, "material_domain", text="Domain")
+                    mat_box.template_ID(active_entry, "material", open="material.open")
+
+                    sync_row = mat_box.row(align=True)
+                    op_apply = sync_row.operator("voxel.sync_display_to_material", text="Apply Display", icon='FORWARD')
+                    op_apply.index = active_index
+                    op_read = sync_row.operator("voxel.sync_material_to_display", text="Read Base Color", icon='BACK')
+                    op_read.index = active_index
+
+                    if not active_entry.material_owned and active_entry.material is not None:
+                        op_single = mat_box.operator("voxel.make_material_single_user", text="Make Single User", icon='UNLINKED')
+                        op_single.index = active_index
+
                     # Duplicate & Remove Actions
                     btn_row = edit_box.row(align=True)
                     dup_op = btn_row.operator("voxel.duplicate_palette_color", text="Duplicate", icon='DUPLICATE')

@@ -147,7 +147,116 @@ class VOXEL_OT_select_palette_color(Operator):
             # Keep active_palette_choice in sync if within 1..8
             if 1 <= self.index <= 8:
                 scene.voxel_workspace.active_palette_choice = str(self.index)
+
+        # Activate corresponding material slot if active object is a voxel mesh
+        obj = context.active_object
+        if obj and obj.type == 'MESH' and hasattr(obj.data, "voxel_workspace"):
+            from ..blender.material_domains import used_surface_indices
+            mesh = obj.data
+            entry = get_or_load(mesh)
+            if entry and entry.grid:
+                surf_indices = used_surface_indices(mesh, entry.grid)
+                if self.index in surf_indices:
+                    obj.active_material_index = surf_indices.index(self.index)
+
         tag_redraw_all_viewports()
+        return {'FINISHED'}
+
+
+class VOXEL_OT_sync_display_to_material_color(Operator):
+    """Apply the palette display color to the native material's Principled BSDF Base Color."""
+    bl_idname = "voxel.sync_display_to_material"
+    bl_label = "Apply Display Color to Material"
+    bl_description = "Set the Principled BSDF Base Color from this palette entry's display color"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    if bpy is not None:
+        index: IntProperty(name="Index", default=1, min=1, max=255)
+
+    def execute(self, context):
+        obj = context.active_object
+        if obj is None or obj.type != 'MESH' or not hasattr(obj.data, "voxel_workspace"):
+            self.report({'WARNING'}, "No active voxel volume")
+            return {'CANCELLED'}
+
+        entry = next((e for e in obj.data.voxel_workspace.palette if e.index == self.index), None)
+        if entry is None or entry.material is None:
+            self.report({'WARNING'}, "No material bound to this palette entry")
+            return {'CANCELLED'}
+
+        from ..blender.material_domains import set_generated_surface_base_color
+        success = set_generated_surface_base_color(entry)
+        if not success:
+            self.report({'INFO'}, "Material does not have a standard Principled BSDF Base Color input")
+        else:
+            self.report({'INFO'}, "Updated Material Base Color from palette display color")
+        return {'FINISHED'}
+
+
+class VOXEL_OT_sync_material_to_display_color(Operator):
+    """Read the native material's Principled BSDF Base Color into the palette display color."""
+    bl_idname = "voxel.sync_material_to_display"
+    bl_label = "Set Display Color from Material"
+    bl_description = "Read the Principled BSDF Base Color from the material into this palette entry's display color"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    if bpy is not None:
+        index: IntProperty(name="Index", default=1, min=1, max=255)
+
+    def execute(self, context):
+        obj = context.active_object
+        if obj is None or obj.type != 'MESH' or not hasattr(obj.data, "voxel_workspace"):
+            self.report({'WARNING'}, "No active voxel volume")
+            return {'CANCELLED'}
+
+        entry = next((e for e in obj.data.voxel_workspace.palette if e.index == self.index), None)
+        if entry is None or entry.material is None or not entry.material.use_nodes:
+            self.report({'WARNING'}, "No node material bound to this palette entry")
+            return {'CANCELLED'}
+
+        bsdf = entry.material.node_tree.nodes.get("Principled BSDF")
+        if bsdf and "Base Color" in bsdf.inputs:
+            col = bsdf.inputs["Base Color"].default_value
+            alpha = bsdf.inputs["Alpha"].default_value if "Alpha" in bsdf.inputs else 1.0
+            entry.color = (float(col[0]), float(col[1]), float(col[2]), float(alpha))
+            from ..blender.gpu_preview import drop_palette_lut
+            drop_palette_lut(obj.data.voxel_workspace.uuid)
+            tag_redraw_all_viewports()
+            self.report({'INFO'}, "Updated palette display color from Material Base Color")
+        else:
+            self.report({'INFO'}, "Material does not have a recognizable Principled BSDF Base Color")
+
+        return {'FINISHED'}
+
+
+class VOXEL_OT_make_material_single_user(Operator):
+    """Make the active palette entry's material single-user (owned by this volume)."""
+    bl_idname = "voxel.make_material_single_user"
+    bl_label = "Make Material Single User"
+    bl_description = "Create an independent owned copy of this material for this volume"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    if bpy is not None:
+        index: IntProperty(name="Index", default=1, min=1, max=255)
+
+    def execute(self, context):
+        obj = context.active_object
+        if obj is None or obj.type != 'MESH' or not hasattr(obj.data, "voxel_workspace"):
+            self.report({'WARNING'}, "No active voxel volume")
+            return {'CANCELLED'}
+
+        entry = next((e for e in obj.data.voxel_workspace.palette if e.index == self.index), None)
+        if entry is None:
+            return {'CANCELLED'}
+
+        from ..blender.material_domains import make_entry_material_single_user, reconcile_surface_slots
+        make_entry_material_single_user(obj.data, entry)
+        entry_vol = get_or_load(obj.data)
+        if entry_vol and entry_vol.grid:
+            reconcile_surface_slots(obj.data, entry_vol.grid)
+
+        tag_redraw_all_viewports()
+        self.report({'INFO'}, f"Material for Color [{self.index}] is now single-user")
         return {'FINISHED'}
 
 
@@ -927,6 +1036,9 @@ class VOXEL_OT_load_palette_preset(Operator):
 
 PALETTE_OPERATOR_CLASSES = [
     VOXEL_OT_select_palette_color,
+    VOXEL_OT_sync_display_to_material_color,
+    VOXEL_OT_sync_material_to_display_color,
+    VOXEL_OT_make_material_single_user,
     VOXEL_OT_add_palette_color,
     VOXEL_OT_duplicate_palette_color,
     VOXEL_OT_remove_palette_color,

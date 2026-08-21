@@ -15,6 +15,9 @@ from .brush import (
 )
 from .palette import (
     VOXEL_OT_select_palette_color,
+    VOXEL_OT_sync_display_to_material_color,
+    VOXEL_OT_sync_material_to_display_color,
+    VOXEL_OT_make_material_single_user,
     VOXEL_OT_add_palette_color,
     VOXEL_OT_duplicate_palette_color,
     VOXEL_OT_remove_palette_color,
@@ -46,6 +49,9 @@ __all__ = [
     "VOXEL_OT_stop_editing",
     "VOXEL_OT_brush",
     "VOXEL_OT_select_palette_color",
+    "VOXEL_OT_sync_display_to_material_color",
+    "VOXEL_OT_sync_material_to_display_color",
+    "VOXEL_OT_make_material_single_user",
     "VOXEL_OT_add_palette_color",
     "VOXEL_OT_duplicate_palette_color",
     "VOXEL_OT_remove_palette_color",

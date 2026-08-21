@@ -119,9 +119,7 @@ def sync_volume_mesh(
     slot_map = reconcile_surface_slots(mesh, grid)
 
     if ensure_material:
-        # If no surface slots created (e.g. legacy/fallback), ensure legacy material
-        if len(mesh.materials) == 0:
-            ensure_voxel_material(mesh)
+        ensure_voxel_material(mesh)
 
     if not all_positions or vert_offset == 0:
         mesh.update()
@@ -178,20 +176,6 @@ def sync_volume_mesh(
         attr = mesh.attributes.new(name=PALETTE_ATTRIBUTE_NAME, type="INT", domain="CORNER")
 
     attr.data.foreach_set("value", corner_palette)
-
-    # Clean up and remove unreferenced legacy atlas material/image
-    try:
-        from .materials import PALETTE_IMAGE_NAME, PALETTE_MATERIAL_NAME
-        for mat_name in [f"{PALETTE_MATERIAL_NAME}_{vol_uuid}", PALETTE_MATERIAL_NAME]:
-            m = bpy.data.materials.get(mat_name)
-            if m and m.users == 0:
-                bpy.data.materials.remove(m)
-        for img_name in [f"{PALETTE_IMAGE_NAME}_{vol_uuid}", PALETTE_IMAGE_NAME]:
-            im = bpy.data.images.get(img_name)
-            if im and im.users == 0:
-                bpy.data.images.remove(im)
-    except Exception:
-        pass
 
     mesh.update()
     return cpu_buffers
