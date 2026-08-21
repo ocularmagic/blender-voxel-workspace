@@ -99,7 +99,11 @@ def get_palette_rgba_lut(target: Any = None) -> np.ndarray:
         for p_entry in props.palette:
             idx = int(p_entry.index)
             if 0 <= idx < 256:
-                lut[idx] = tuple(p_entry.color)
+                col = list(p_entry.color)
+                # If VOLUME domain, use editing preview alpha (0.35)
+                if getattr(p_entry, "material_domain", "SURFACE") == "VOLUME":
+                    col[3] = 0.35
+                lut[idx] = col
         if entry is not None:
             entry.palette_lut = lut
         return lut

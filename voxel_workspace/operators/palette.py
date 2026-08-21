@@ -229,6 +229,67 @@ class VOXEL_OT_sync_material_to_display_color(Operator):
         return {'FINISHED'}
 
 
+class VOXEL_OT_set_palette_material_domain(Operator):
+    """Set the render domain (SURFACE or VOLUME) for a palette entry."""
+    bl_idname = "voxel.set_palette_material_domain"
+    bl_label = "Set Material Domain"
+    bl_description = "Switch between Surface and Volume render domains for this palette entry"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    if bpy is not None:
+        index: IntProperty(name="Index", default=1, min=1, max=255)
+        domain: EnumProperty(
+            name="Domain",
+            items=[
+                ("SURFACE", "Surface", "Surface mesh"),
+                ("VOLUME", "Volume", "Volume proxy"),
+            ],
+            default="SURFACE",
+        )
+
+    def execute(self, context):
+        obj = context.active_object
+        if obj is None or obj.type != 'MESH' or not hasattr(obj.data, "voxel_workspace"):
+            self.report({'WARNING'}, "No active voxel volume")
+            return {'CANCELLED'}
+
+        mesh = obj.data
+        entry = next((e for e in mesh.voxel_workspace.palette if e.index == self.index), None)
+        if entry is None:
+            return {'CANCELLED'}
+
+        old_domain = getattr(entry, "material_domain", "SURFACE")
+        if old_domain == self.domain:
+            return {'FINISHED'}
+
+        entry.material_domain = self.domain
+        
+        # If entry has default generated material of previous kind, update it to match new domain
+        if entry.material_owned and entry.material is not None:
+            from ..blender.material_domains import create_default_surface_material, create_default_volume_material
+            kind = entry.material.get("voxel_workspace_generated_kind", "")
+            if self.domain == "VOLUME" and kind == "SURFACE_DEFAULT":
+                entry.material = create_default_volume_material(mesh, entry, volume_color=tuple(entry.color))
+            elif self.domain == "SURFACE" and kind == "VOLUME_DEFAULT":
+                entry.material = create_default_surface_material(mesh, entry, base_color=tuple(entry.color))
+
+        # Invalidate caches and fully re-sync primary mesh and proxies
+        vol_entry = get_or_load(mesh)
+        if vol_entry is not None:
+            vol_entry.cpu_buffers.clear()
+            vol_entry.volume_proxy_buffers.clear()
+            vol_entry.gpu_batches.clear()
+            vol_entry.gpu_edge_batches.clear()
+            vol_entry.palette_lut = None
+            if vol_entry.grid is not None:
+                from ..blender.mesh_sync import sync_volume_mesh
+                sync_volume_mesh(mesh, grid=vol_entry.grid, entry=vol_entry, dirty_only=False)
+
+        tag_redraw_all_viewports()
+        self.report({'INFO'}, f"Color [{self.index}] domain set to {self.domain}")
+        return {'FINISHED'}
+
+
 class VOXEL_OT_make_material_single_user(Operator):
     """Make the active palette entry's material single-user (owned by this volume)."""
     bl_idname = "voxel.make_material_single_user"
@@ -1038,6 +1099,7 @@ PALETTE_OPERATOR_CLASSES = [
     VOXEL_OT_select_palette_color,
     VOXEL_OT_sync_display_to_material_color,
     VOXEL_OT_sync_material_to_display_color,
+    VOXEL_OT_set_palette_material_domain,
     VOXEL_OT_make_material_single_user,
     VOXEL_OT_add_palette_color,
     VOXEL_OT_duplicate_palette_color,
