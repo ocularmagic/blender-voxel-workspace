@@ -101,7 +101,8 @@ class VOXEL_PT_main_panel(Panel):
                     entries = all_entries
 
                 # Swatch Grid: Square buttons with swatch color fill, highlighted active border, and small center dot if used
-                grid_flow = pal_box.grid_flow(row_major=True, columns=6, even_columns=True, even_rows=True)
+                # 8 swatches per row, scale_y=1.0 for square button outline
+                grid_flow = pal_box.grid_flow(row_major=True, columns=8, even_columns=True, even_rows=True)
                 for entry_item in entries:
                     idx = entry_item.index
                     is_active = (idx == active_index)
@@ -115,7 +116,7 @@ class VOXEL_PT_main_panel(Panel):
                     
                     cell_box = grid_flow.column(align=True)
                     row = cell_box.row(align=True)
-                    row.scale_y = 1.6
+                    row.scale_y = 1.0
                     row.scale_x = 1.0
                     # Square button with custom swatch icon (color fill + active border + center used dot) and no number text
                     op = row.operator(
