@@ -353,6 +353,7 @@ class VOXEL_OT_add_palette_color(Operator):
         mesh = obj.data
         props = mesh.voxel_workspace
         from ..blender.properties import ensure_palette
+        from ..blender.material_domains import initialize_palette_entry
         ensure_palette(mesh)
 
         existing_indices = {entry.index for entry in props.palette}
@@ -368,9 +369,14 @@ class VOXEL_OT_add_palette_color(Operator):
             return {'CANCELLED'}
 
         item = props.palette.add()
-        item.index = new_index
-        item.name = self.name or f"Color {new_index}"
-        item.color = self.color
+        initialize_palette_entry(
+            mesh,
+            item,
+            index=new_index,
+            name=self.name or f"Color {new_index}",
+            color=self.color,
+            domain="SURFACE",
+        )
 
         refresh_palette_image(mesh)
         drop_palette_lut(props.uuid)
@@ -437,10 +443,16 @@ class VOXEL_OT_duplicate_palette_color(Operator):
             self.report({'ERROR'}, "Palette is full (maximum 255 colors)")
             return {'CANCELLED'}
 
+        from ..blender.material_domains import initialize_palette_entry
         item = props.palette.add()
-        item.index = new_index
-        item.name = f"{src_entry.name} (Copy)" if src_entry.name else f"Color {new_index}"
-        item.color = src_entry.color
+        initialize_palette_entry(
+            mesh,
+            item,
+            index=new_index,
+            name=f"{src_entry.name} (Copy)" if src_entry.name else f"Color {new_index}",
+            color=src_entry.color,
+            domain=getattr(src_entry, "material_domain", "SURFACE"),
+        )
 
         refresh_palette_image(mesh)
         drop_palette_lut(props.uuid)
@@ -769,14 +781,16 @@ class VOXEL_OT_compact_palette(Operator):
         empty_item.index = 0
         empty_item.name = "Empty"
         empty_item.color = DEFAULT_PALETTE[0]
+        empty_item.material_domain = "SURFACE"
+        empty_item.material_owned = True
+
+        from ..blender.material_domains import initialize_palette_entry
 
         # Add remapped entries 1..N
         for new_idx in range(1, len(used_indices) + 1):
             item = props.palette.add()
-            item.index = new_idx
             name, col = saved_entries.get(new_idx, (f"Color {new_idx}", (0.5, 0.5, 0.5, 1.0)))
-            item.name = name
-            item.color = col
+            initialize_palette_entry(mesh, item, index=new_idx, name=name, color=col, domain="SURFACE")
 
         # If no colors used at all, ensure defaults
         if len(used_indices) == 0:
@@ -860,6 +874,7 @@ class VOXEL_OT_save_palette_preset(Operator):
                 PalettePresetEntry(
                     name=entry.name,
                     color_srgb=rgba_linear_to_srgb_bytes(tuple(entry.color)),
+                    domain=getattr(entry, "material_domain", "SURFACE"),
                 )
             )
 
@@ -989,7 +1004,9 @@ class VOXEL_OT_load_palette_preset(Operator):
         preset_linear_entries = []
         for c in preset.colors:
             lin_rgba = rgba_srgb_bytes_to_linear(c.color_srgb)
-            preset_linear_entries.append((c.name, lin_rgba))
+            preset_linear_entries.append((c.name, lin_rgba, getattr(c, "domain", "SURFACE")))
+
+        from ..blender.material_domains import initialize_palette_entry
 
         if mode == "REPLACE":
             # Clear all non-zero entries and assign preset colors starting at index 1
@@ -999,14 +1016,14 @@ class VOXEL_OT_load_palette_preset(Operator):
             empty_item.index = 0
             empty_item.name = "Empty"
             empty_item.color = DEFAULT_PALETTE[0]
+            empty_item.material_domain = "SURFACE"
+            empty_item.material_owned = True
 
-            for idx, (c_name, c_rgba) in enumerate(preset_linear_entries, start=1):
+            for idx, (c_name, c_rgba, c_dom) in enumerate(preset_linear_entries, start=1):
                 if idx > 255:
                     break
                 item = props.palette.add()
-                item.index = idx
-                item.name = c_name or f"Color {idx}"
-                item.color = c_rgba
+                initialize_palette_entry(mesh, item, index=idx, name=c_name or f"Color {idx}", color=c_rgba, domain=c_dom)
 
         elif mode == "APPEND":
             # Keep all existing entries; append preset colors that aren't already bit-close in palette
@@ -1021,7 +1038,7 @@ class VOXEL_OT_load_palette_preset(Operator):
                 return False
 
             next_idx = 1
-            for c_name, c_rgba in preset_linear_entries:
+            for c_name, c_rgba, c_dom in preset_linear_entries:
                 if is_already_present(c_rgba):
                     continue
                 # Find lowest unused index
@@ -1030,9 +1047,7 @@ class VOXEL_OT_load_palette_preset(Operator):
                 if next_idx > 255:
                     break
                 item = props.palette.add()
-                item.index = next_idx
-                item.name = c_name or f"Color {next_idx}"
-                item.color = c_rgba
+                initialize_palette_entry(mesh, item, index=next_idx, name=c_name or f"Color {next_idx}", color=c_rgba, domain=c_dom)
                 existing_indices.add(next_idx)
                 existing_colors.append(c_rgba)
 
@@ -1040,12 +1055,12 @@ class VOXEL_OT_load_palette_preset(Operator):
             # Rebuild palette to contain the preset colors, and remap all existing voxels to nearest preset colors
             # 1. Build candidates list from preset (indices 1..N)
             candidates = []
-            for idx, (c_name, c_rgba) in enumerate(preset_linear_entries, start=1):
+            for idx, (c_name, c_rgba, c_dom) in enumerate(preset_linear_entries, start=1):
                 if idx > 255:
                     break
-                candidates.append((idx, c_name, c_rgba))
+                candidates.append((idx, c_name, c_rgba, c_dom))
 
-            candidate_colors_for_matching = [(idx, c_rgba) for idx, c_name, c_rgba in candidates]
+            candidate_colors_for_matching = [(idx, c_rgba) for idx, c_name, c_rgba, c_dom in candidates]
 
             # 2. Build remap table for all used old indices
             remap_table = {}
@@ -1065,12 +1080,12 @@ class VOXEL_OT_load_palette_preset(Operator):
             empty_item.index = 0
             empty_item.name = "Empty"
             empty_item.color = DEFAULT_PALETTE[0]
+            empty_item.material_domain = "SURFACE"
+            empty_item.material_owned = True
 
-            for idx, c_name, c_rgba in candidates:
+            for idx, c_name, c_rgba, c_dom in candidates:
                 item = props.palette.add()
-                item.index = idx
-                item.name = c_name or f"Color {idx}"
-                item.color = c_rgba
+                initialize_palette_entry(mesh, item, index=idx, name=c_name or f"Color {idx}", color=c_rgba, domain=c_dom)
 
         # Sync caches and IDProperties
         from ..blender.persistence import serialize_volume

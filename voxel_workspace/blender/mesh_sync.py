@@ -125,6 +125,11 @@ def sync_volume_mesh(
     # Clear geometry while preserving IDProperties and datablock identity
     mesh.clear_geometry()
 
+    # Ensure palette initialized before reconciling slots
+    if len(mesh.voxel_workspace.palette) == 0:
+        from .properties import ensure_palette
+        ensure_palette(mesh)
+
     # Reconcile native surface material slots
     from .material_domains import reconcile_surface_slots
     slot_map = reconcile_surface_slots(mesh, grid)

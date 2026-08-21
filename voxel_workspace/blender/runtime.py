@@ -182,11 +182,14 @@ def deduplicate_mesh_uuids(scene=None, depsgraph=None) -> List[Tuple[Any, str, s
                 from .materials import (
                     get_or_create_palette_material,
                     get_or_create_palette_image,
-                    ensure_voxel_material,
                 )
                 # Create dedicated new material & image for the new UUID
-                new_mat = get_or_create_palette_material(mesh)
-                ensure_voxel_material(mesh)
+                new_img = get_or_create_palette_image(mesh, pack_image=False)
+                new_mat = get_or_create_palette_material(mesh, pack_image=False)
+                if len(mesh.materials) > 0:
+                    mesh.materials[0] = new_mat
+                else:
+                    mesh.materials.append(new_mat)
 
                 repaired.append((mesh, old_uuid, new_uuid))
                 seen_uuids[new_uuid] = mesh

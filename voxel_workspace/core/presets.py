@@ -50,6 +50,7 @@ def rgba_srgb_bytes_to_linear(rgba_bytes: List[int]) -> Tuple[float, float, floa
 class PalettePresetEntry:
     name: str
     color_srgb: List[int]  # [r, g, b, a] in sRGB bytes
+    domain: str = "SURFACE"  # "SURFACE" or "VOLUME"
 
 
 @dataclass
@@ -68,6 +69,7 @@ class PalettePreset:
                 {
                     "name": c.name,
                     "color": c.color_srgb,
+                    "domain": c.domain,
                 }
                 for c in self.colors
             ],
@@ -86,10 +88,11 @@ class PalettePreset:
         for item in raw_colors:
             c_name = str(item.get("name", ""))
             c_val = list(item.get("color", [0, 0, 0, 255]))
+            c_dom = str(item.get("domain", "SURFACE"))
             # Ensure 4 components
             while len(c_val) < 4:
                 c_val.append(255)
-            colors.append(PalettePresetEntry(name=c_name, color_srgb=c_val[:4]))
+            colors.append(PalettePresetEntry(name=c_name, color_srgb=c_val[:4], domain=c_dom))
         return cls(
             name=name,
             schema_version=schema_version,

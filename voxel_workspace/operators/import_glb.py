@@ -30,22 +30,30 @@ def _is_voxel_object(obj: Any) -> bool:
 
 
 def replace_volume_palette(mesh: Any, palette: List[Tuple[float, float, float, float]]) -> None:
-    """Replace the mesh palette collection. Index 0 remains empty."""
+    """Replace the mesh palette collection with owned default surface materials. Index 0 remains empty."""
+    from ..blender.material_domains import initialize_palette_entry
     props = mesh.voxel_workspace
     props.palette.clear()
     empty = props.palette.add()
     empty.index = 0
     empty.name = "Empty"
     empty.color = DEFAULT_PALETTE[0]
+    empty.material_domain = "SURFACE"
+    empty.material_owned = True
     for idx, color in enumerate(palette):
         if idx == 0:
             continue
         if idx > 255:
             break
         item = props.palette.add()
-        item.index = idx
-        item.name = f"Imported {idx}"
-        item.color = tuple(float(c) for c in color)
+        initialize_palette_entry(
+            mesh,
+            item,
+            index=idx,
+            name=f"Imported {idx}",
+            color=tuple(float(c) for c in color),
+            domain="SURFACE",
+        )
 
 
 def _commit_import(obj: Any, result: Any, undo_message: str) -> None:

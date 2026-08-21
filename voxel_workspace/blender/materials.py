@@ -205,7 +205,7 @@ def get_or_create_palette_material(mesh: Any = None, pack_image: bool = True) ->
 
 
 def ensure_voxel_material(target: Any, pack_image: bool = True) -> Any:
-    """Ensure that the given Mesh or Object has exactly one material slot with its per-volume palette material."""
+    """Ensure that the given Mesh or Object has its per-volume palette material or native surface slots."""
     if target is None or bpy is None:
         return None
 
@@ -213,14 +213,15 @@ def ensure_voxel_material(target: Any, pack_image: bool = True) -> Any:
     if mesh is None or not hasattr(mesh, "materials"):
         return None
 
+    # If native surface slots already populated on mesh, preserve them
+    if len(mesh.materials) > 0:
+        return mesh.materials[0]
+
     mat = get_or_create_palette_material(mesh, pack_image=pack_image)
     if len(mesh.materials) == 0:
         mesh.materials.append(mat)
     else:
         if mesh.materials[0] != mat:
             mesh.materials[0] = mat
-
-    while len(mesh.materials) > 1:
-        mesh.materials.pop(index=len(mesh.materials) - 1)
 
     return mat
