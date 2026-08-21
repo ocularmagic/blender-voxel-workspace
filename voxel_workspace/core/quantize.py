@@ -27,6 +27,16 @@ class QuantizedPaletteResult:
     remap_indices: Optional[np.ndarray] = None       # If input was array of color samples, mapped palette index per sample
 
 
+def _validated_max_colors(max_colors: int) -> int:
+    """Return a valid palette limit or reject values outside the public contract."""
+    if isinstance(max_colors, bool) or not isinstance(max_colors, (int, np.integer)):
+        raise TypeError("max_colors must be an integer in the range 1..4096")
+    value = int(max_colors)
+    if not 1 <= value <= 4096:
+        raise ValueError("max_colors must be in the range 1..4096")
+    return value
+
+
 def quantize_colors_median_cut(
     colors_rgba_linear: Union[np.ndarray, Sequence[Tuple[float, float, float, float]]],
     max_colors: int = 255,
@@ -47,8 +57,7 @@ def quantize_colors_median_cut(
         - color_map: dict mapping (r_byte, g_byte, b_byte, a_byte) -> palette_index
         - remap_indices: (N,) int32 array mapping each input sample to its palette index (0 for transparent)
     """
-    if max_colors < 1:
-        max_colors = 1
+    max_colors = _validated_max_colors(max_colors)
 
     arr = np.ascontiguousarray(colors_rgba_linear, dtype=np.float32)
     if arr.ndim == 1:
@@ -118,7 +127,7 @@ def quantize_colors_median_cut(
         palette = [(0.0, 0.0, 0.0, 0.0)]
         color_map: Dict[Tuple[int, int, int, int], int] = {}
         for i, col in enumerate(unq_linear, start=1):
-            palette.append(tuple(col))
+            palette.append(tuple(float(component) for component in col))
             b_tuple = (int(unq_bytes[i - 1, 0]), int(unq_bytes[i - 1, 1]), int(unq_bytes[i - 1, 2]), int(unq_bytes[i - 1, 3]))
             color_map[b_tuple] = i
 
@@ -239,11 +248,16 @@ def quantize_palette_to_limit(
     Returns:
         (quantized_palette, remap_table: {old_index: new_index})
     """
-    valid_old_indices = [idx for idx in range(1, len(palette)) if idx < len(palette)]
+    max_colors = _validated_max_colors(max_colors)
+    valid_old_indices = list(range(1, len(palette)))
     if len(valid_old_indices) <= max_colors:
         # Palette already fits within limit
         remap_table = {idx: idx for idx in valid_old_indices}
-        return list(palette), remap_table
+        palette_copy = [
+            tuple(float(component) for component in color)
+            for color in palette
+        ]
+        return palette_copy, remap_table
 
     colors = [palette[idx] for idx in valid_old_indices]
     weights = [counts.get(idx, 1) if counts else 1 for idx in valid_old_indices]
