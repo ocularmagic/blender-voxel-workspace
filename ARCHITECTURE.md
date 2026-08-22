@@ -45,6 +45,10 @@ If a spike invalidates a D#, use the next rung. Do not invent a new product in t
 | D4 GPU depth or instancing | Live path = D5 on a timer / on stroke; GPU handler only for bounds, hover, work plane. |
 | D5 bulk mesh write too slow | Smaller bricks, or a compiled mesher later; do not GPU-preview your way around a mesh you cannot commit. |
 | D6 attribute lookup | Explode used indices to material slots (capped). |
+| D11 domain mask binary-on-ID | Raw uint8 domain byte channel (1 byte/cell) or secondary datablock. |
+| D12 Empty root transform hierarchy | Single parent mesh object with internal sub-mesh components. |
+| D13 multi-instance resolution | Reject linked duplication; force deep duplicate on copy. |
+| D14 root proxy render parity | Revert volume proxy parenting directly to Surface mesh object. |
 
 ## What this file is not
 
