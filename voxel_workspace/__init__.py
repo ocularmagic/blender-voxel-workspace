@@ -13,6 +13,7 @@ from .blender.runtime import register_runtime, unregister_runtime
 from .operators import OPERATOR_CLASSES
 from .ui import PANEL_CLASSES, GIZMO_CLASSES
 from .ui.palette_icons import register_palette_icons, unregister_palette_icons
+from .ui.panels import register_tool_header_draw, unregister_tool_header_draw
 from .ui import workspace as _workspace_ui
 
 # Blender can retain an old extension submodule in ``sys.modules`` after an
@@ -53,6 +54,8 @@ def register() -> None:
     for cls in CLASSES:
         bpy.utils.register_class(cls)
 
+    register_tool_header_draw()
+
     # Create/activate the custom Voxel Workspace (left palette + bottom tools).
     # Safe no-op in background import contexts without a window.
     try:
@@ -75,6 +78,11 @@ def unregister() -> None:
     try:
         from .blender.gpu_preview import cleanup_gpu_preview
         cleanup_gpu_preview()
+    except Exception:
+        pass
+
+    try:
+        unregister_tool_header_draw()
     except Exception:
         pass
 

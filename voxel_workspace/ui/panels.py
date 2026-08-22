@@ -1,10 +1,9 @@
 """Voxel Workspace panels for supported Blender 5.1 UI regions.
 
 Layout:
-* Left palette -> VIEW_3D sidebar (UI), flipped left by the custom workspace.
-* Bottom tools -> VIEW_3D tool header callback, flipped bottom by the workspace.
-* Settings -> right Properties editor in the custom workspace, with a trimmed
-  VIEW_3D N-panel fallback outside it.
+* Voxel Palette -> native VIEW_3D N-panel category (same tab strip as Item/Tool/Voxel).
+* Bottom tools -> VIEW_3D asset shelf, the same bottom region Sculpting uses.
+* Voxel settings stay on the right N-panel Voxel tab.
 """
 from typing import Any
 
@@ -178,15 +177,12 @@ def _sidebar_alignment(context: Any) -> str:
 
 
 class VOXEL_PT_palette_panel(Panel):
-    """Surface / Volume palette in the left panel of Voxel Workspace."""
-    bl_space_type = 'TEXT_EDITOR'
+    """Surface / Volume palette as a native N-panel category tab."""
+    bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'Voxel Palette'
     bl_label = 'Voxel Palette'
-
-    @classmethod
-    def poll(cls, context: Any) -> bool:
-        return _in_voxel_workspace(context)
+    bl_order = 1
 
     def draw(self, context: Any) -> None:
         layout = self.layout
@@ -195,17 +191,17 @@ class VOXEL_PT_palette_panel(Panel):
 
 
 # ---------------------------------------------------------------------------
-# Bottom tool bar (ASSET_SHELF region)
+# Bottom tool bar (ASSET_SHELF region — Sculpting's bottom dock)
 # ---------------------------------------------------------------------------
 _TOOL_SPECS = (
-    ("ADD_SURFACE", "voxel.start_surface", "ADD SURFACE", 'BRUSH_DATA'),
-    ("ADD_VOLUME", "voxel.start_volume", "ADD VOLUME", 'MOD_FLUIDSIM'),
-    ("ERASE", "voxel.start_erase", "ERASE VOXEL", 'REMOVE'),
+    ("ADD_SURFACE", "voxel.start_surface", "Add Surface", 'BRUSH_DATA'),
+    ("ADD_VOLUME", "voxel.start_volume", "Add Volume", 'MOD_FLUIDSIM'),
+    ("ERASE", "voxel.start_erase", "Erase Voxel", 'REMOVE'),
 )
 
 
 def draw_voxel_tool_header(self: Any, context: Any) -> None:
-    """Draw square voxel brush buttons in the bottom-flipped tool header."""
+    """Draw square voxel brush buttons on a real header region."""
     if context is None or bpy is None or not _in_voxel_workspace(context):
         return
     layout = self.layout
@@ -213,30 +209,80 @@ def draw_voxel_tool_header(self: Any, context: Any) -> None:
     active_tool = getattr(sc_props, "active_tool", "NONE") if sc_props else "NONE"
 
     row = layout.row(align=True)
-    row.scale_y = 1.35
-    row.alignment = 'CENTER'
+    row.scale_y = 1.6
+    row.alignment = "CENTER"
     for mode, op_id, _label, icon in _TOOL_SPECS:
         sub = row.row(align=True)
         sub.alert = active_tool == mode
-        sub.scale_x = 1.35
-        sub.operator(op_id, text="", icon=icon)
+        sub.scale_x = 1.6
+        sub.operator(op_id, text="", icon=icon, emboss=True)
 
-    if active_tool in {"ADD_SURFACE", "ADD_VOLUME", "ERASE", "PLACE"}:
-        row.separator(factor=0.5)
-        row.operator("voxel.stop_editing", text="", icon='CANCEL')
+    stop = row.row(align=True)
+    stop.alert = active_tool in {"ADD_SURFACE", "ADD_VOLUME", "ERASE", "PLACE"}
+    stop.scale_x = 1.6
+    stop.operator("voxel.stop_editing", text="", icon="CANCEL", emboss=True)
 
-    row.separator(factor=1.0)
     if sc_props is not None:
-        if active_tool == 'ADD_VOLUME':
+        if active_tool == "ADD_VOLUME":
             active_index = sc_props.active_volume_palette_index
-            label = "Volume"
+            domain = "Volume"
         elif active_tool in {"ADD_SURFACE", "PLACE", "ERASE"}:
             active_index = sc_props.active_surface_palette_index
-            label = "Surface"
+            domain = "Surface"
         else:
             active_index = "-"
-            label = "None"
-        row.label(text=f"{label} [{active_index}]", icon='COLOR')
+            domain = "None"
+        row.separator(factor=0.8)
+        row.label(text=f"{domain} [{active_index}]", icon="COLOR")
+
+
+class VOXEL_AST_workspace(bpy.types.AssetShelf if bpy is not None else object):
+    """Empty asset catalog so the bottom Sculpting-style shelf is not a brush browser."""
+    bl_idname = "VIEW3D_AST_voxel_workspace"
+    bl_space_type = "VIEW_3D"
+
+    @classmethod
+    def poll(cls, context: Any) -> bool:
+        return _in_voxel_workspace(context)
+
+    @classmethod
+    def asset_poll(cls, _asset: Any) -> bool:
+        return False
+
+
+class VOXEL_HT_workspace_tools(bpy.types.Header if bpy is not None else object):
+    """Square tool icons on the asset-shelf header (the shelf body does not draw panels)."""
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "ASSET_SHELF_HEADER"
+
+    def draw(self, context: Any) -> None:
+        draw_voxel_tool_header(self, context)
+
+
+def register_tool_header_draw() -> None:
+    """Also pin the buttons to the 3D tool header, flipped to the bottom of the view."""
+    if bpy is None:
+        return
+    header = getattr(bpy.types, "VIEW3D_HT_tool_header", None)
+    if header is None:
+        return
+    try:
+        header.remove(draw_voxel_tool_header)
+    except Exception:
+        pass
+    header.prepend(draw_voxel_tool_header)
+
+
+def unregister_tool_header_draw() -> None:
+    if bpy is None:
+        return
+    header = getattr(bpy.types, "VIEW3D_HT_tool_header", None)
+    if header is None:
+        return
+    try:
+        header.remove(draw_voxel_tool_header)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -322,10 +368,11 @@ class VOXEL_PT_main_panel(Panel):
     bl_region_type = 'UI'
     bl_category = 'Voxel'
     bl_label = 'Voxel Volume'
+    bl_order = 0
 
     @classmethod
     def poll(cls, context: Any) -> bool:
-        return not _in_voxel_workspace(context) or _sidebar_alignment(context) == 'RIGHT'
+        return True
 
     def draw(self, context: Any) -> None:
         _draw_volume_settings(self.layout, context)
@@ -347,6 +394,8 @@ class VOXEL_PT_workspace_settings(Panel):
 
 
 PANEL_CLASSES = [
-    VOXEL_PT_palette_panel,
     VOXEL_PT_main_panel,
+    VOXEL_PT_palette_panel,
+    VOXEL_HT_workspace_tools,
+    VOXEL_AST_workspace,
 ]
