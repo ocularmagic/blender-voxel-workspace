@@ -18,6 +18,12 @@ from ..blender.runtime import (
     has_volume,
     get_volume,
 )
+from ..blender.object_graph import (
+    resolve_volume_context,
+    resolve_authoritative_mesh,
+    resolve_voxel_root,
+    resolve_surface_object,
+)
 
 
 def _request_brush_stop() -> None:
@@ -26,16 +32,16 @@ def _request_brush_stop() -> None:
     request_brush_modal_stop()
 
 
-def is_valid_voxel_object(obj: Any) -> bool:
-    """Check if an object is a valid voxel volume mesh datablock."""
+def is_valid_voxel_object(obj_or_context: Any) -> bool:
+    """Check if an object or context resolves to a valid voxel volume mesh datablock."""
+    if obj_or_context is None:
+        return False
+    mesh = resolve_authoritative_mesh(obj_or_context)
     return bool(
-        obj is not None
-        and obj.type == 'MESH'
-        and hasattr(obj, "data")
-        and obj.data is not None
-        and hasattr(obj.data, "voxel_workspace")
-        and obj.data.voxel_workspace.is_voxel_mesh
-        and bool(obj.data.voxel_workspace.uuid)
+        mesh is not None
+        and hasattr(mesh, "voxel_workspace")
+        and mesh.voxel_workspace.is_voxel_mesh
+        and bool(mesh.voxel_workspace.uuid)
     )
 
 
@@ -48,20 +54,20 @@ class VOXEL_OT_start_place(Operator):
 
     @classmethod
     def poll(cls, context: Any) -> bool:
-        if context is None or not hasattr(context, "active_object"):
+        if context is None:
             return False
-        return is_valid_voxel_object(context.active_object)
+        return is_valid_voxel_object(context)
 
     def execute(self, context: Any) -> set:
         if bpy is None or context is None:
             return {'CANCELLED'}
 
-        obj = context.active_object
-        if not is_valid_voxel_object(obj):
+        v_ctx = resolve_volume_context(context)
+        if v_ctx is None or not v_ctx.mesh_uuid:
             self.report({'ERROR'}, "Active object is not a valid voxel volume")
             return {'CANCELLED'}
 
-        vol_uuid = obj.data.voxel_workspace.uuid
+        vol_uuid = v_ctx.mesh_uuid
         _request_brush_stop()
         stop_editing(context)
         start_editing(vol_uuid, context)
@@ -86,20 +92,20 @@ class VOXEL_OT_start_erase(Operator):
 
     @classmethod
     def poll(cls, context: Any) -> bool:
-        if context is None or not hasattr(context, "active_object"):
+        if context is None:
             return False
-        return is_valid_voxel_object(context.active_object)
+        return is_valid_voxel_object(context)
 
     def execute(self, context: Any) -> set:
         if bpy is None or context is None:
             return {'CANCELLED'}
 
-        obj = context.active_object
-        if not is_valid_voxel_object(obj):
+        v_ctx = resolve_volume_context(context)
+        if v_ctx is None or not v_ctx.mesh_uuid:
             self.report({'ERROR'}, "Active object is not a valid voxel volume")
             return {'CANCELLED'}
 
-        vol_uuid = obj.data.voxel_workspace.uuid
+        vol_uuid = v_ctx.mesh_uuid
         _request_brush_stop()
         stop_editing(context)
         start_editing(vol_uuid, context)

@@ -48,21 +48,17 @@ class VOXEL_PT_main_panel(Panel):
             create_box.operator("voxel.create_volume", text="Create Volume", icon='ADD')
 
         # 2. Active Volume Context & Inspection
-        obj = context.active_object
-        is_voxel = (
-            obj is not None
-            and obj.type == 'MESH'
-            and hasattr(obj, "data")
-            and obj.data is not None
-            and hasattr(obj.data, "voxel_workspace")
-            and obj.data.voxel_workspace.is_voxel_mesh
-        )
+        from ..blender.object_graph import resolve_volume_context
+        v_ctx = resolve_volume_context(context)
+        is_voxel = v_ctx is not None and v_ctx.mesh is not None
+        obj = v_ctx.root if (v_ctx and v_ctx.root) else (v_ctx.surface_object if v_ctx else context.active_object)
 
         vol_box = layout.box()
-        mesh = obj.data if is_voxel else None
+        mesh = v_ctx.mesh if is_voxel else None
         if is_voxel and mesh is not None:
             props = mesh.voxel_workspace
-            vol_box.label(text=f"Volume: {obj.name}", icon='MESH_CUBE')
+            display_name = v_ctx.root.name if v_ctx.root else v_ctx.surface_object.name
+            vol_box.label(text=f"Volume: {display_name}", icon='MESH_CUBE')
 
             ext_min = tuple(props.extent_min)
             ext_max = tuple(props.extent_max)

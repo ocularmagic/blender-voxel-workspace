@@ -13,6 +13,7 @@ except ImportError:
     BoolProperty = EnumProperty = FloatProperty = IntProperty = StringProperty = None
 
 from ..blender.runtime import get_or_load, get_volume
+from ..blender.object_graph import resolve_volume_context, resolve_authoritative_mesh, resolve_surface_object
 from ..constants import DEFAULT_PALETTE
 from ..importers.glb_scene import LARGE_CELL_COUNT, stage_glb
 from ..operators.palette import get_used_palette_counts
@@ -20,12 +21,11 @@ from ..voxelization.voxelize import voxelize_fitted_mesh
 
 
 def _is_voxel_object(obj: Any) -> bool:
-    return (
-        obj is not None
-        and getattr(obj, "type", "") == "MESH"
-        and getattr(obj, "data", None) is not None
-        and hasattr(obj.data, "voxel_workspace")
-        and obj.data.voxel_workspace.is_voxel_mesh
+    mesh = resolve_authoritative_mesh(obj)
+    return bool(
+        mesh is not None
+        and hasattr(mesh, "voxel_workspace")
+        and mesh.voxel_workspace.is_voxel_mesh
     )
 
 
@@ -163,7 +163,7 @@ class VOXEL_OT_import_glb(Operator):
         )
 
     def invoke(self, context: Any, event: Any) -> set:
-        if not _is_voxel_object(context.active_object):
+        if not _is_voxel_object(context):
             self.report({"WARNING"}, "Select a voxel volume first")
             return {"CANCELLED"}
         context.window_manager.fileselect_add(self)
@@ -171,14 +171,14 @@ class VOXEL_OT_import_glb(Operator):
 
     def draw(self, context: Any) -> None:
         layout = self.layout
-        obj = context.active_object if context is not None else None
-        if _is_voxel_object(obj):
-            props = obj.data.voxel_workspace
+        v_ctx = resolve_volume_context(context)
+        if v_ctx is not None and v_ctx.mesh is not None:
+            props = v_ctx.mesh.voxel_workspace
             emin = tuple(props.extent_min)
             emax = tuple(props.extent_max)
             dim = (emax[0] - emin[0], emax[1] - emin[1], emax[2] - emin[2])
             layout.label(text=f"Target: {dim[0]} × {dim[1]} × {dim[2]}")
-            counts = get_used_palette_counts(obj.data)
+            counts = get_used_palette_counts(v_ctx.mesh)
             occupied = int(sum(counts.values()))
             if occupied:
                 layout.label(text=f"Volume has {occupied} voxels — enable Clear and Replace", icon="ERROR")
@@ -197,10 +197,11 @@ class VOXEL_OT_import_glb(Operator):
     def execute(self, context: Any) -> set:
         if bpy is None or context is None:
             return {"CANCELLED"}
-        obj = context.active_object
-        if not _is_voxel_object(obj):
+        v_ctx = resolve_volume_context(context)
+        if v_ctx is None or v_ctx.mesh is None:
             self.report({"WARNING"}, "Select a voxel volume first")
             return {"CANCELLED"}
+        obj = v_ctx.surface_object
         path = Path(self.filepath)
         if not path.is_file():
             self.report({"ERROR"}, f"File not found: {self.filepath}")
@@ -210,7 +211,7 @@ class VOXEL_OT_import_glb(Operator):
             self.report({"ERROR"}, "Choose a .glb or .gltf file")
             return {"CANCELLED"}
 
-        mesh = obj.data
+        mesh = v_ctx.mesh
         counts = get_used_palette_counts(mesh)
         occupied = int(sum(counts.values()))
         if occupied and not bool(self.clear_and_replace):

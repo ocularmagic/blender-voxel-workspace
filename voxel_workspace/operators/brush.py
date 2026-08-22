@@ -100,16 +100,24 @@ def snapshot_grid(grid):
     return snapshot
 
 
-def is_valid_voxel_object(obj: Any) -> bool:
+from ..blender.object_graph import (
+    resolve_volume_context,
+    resolve_authoritative_mesh,
+    resolve_voxel_root,
+    resolve_surface_object,
+)
+
+
+def is_valid_voxel_object(obj_or_context: Any) -> bool:
     """Check if an object is a valid voxel volume mesh datablock."""
+    if obj_or_context is None:
+        return False
+    mesh = resolve_authoritative_mesh(obj_or_context)
     return bool(
-        obj is not None
-        and obj.type == 'MESH'
-        and hasattr(obj, "data")
-        and obj.data is not None
-        and hasattr(obj.data, "voxel_workspace")
-        and obj.data.voxel_workspace.is_voxel_mesh
-        and bool(obj.data.voxel_workspace.uuid)
+        mesh is not None
+        and hasattr(mesh, "voxel_workspace")
+        and mesh.voxel_workspace.is_voxel_mesh
+        and bool(mesh.voxel_workspace.uuid)
     )
 
 
@@ -194,10 +202,10 @@ class BrushSession:
         return None, None, 0, 0
 
     def get_brush_target(
-        self, context: Any, event: Any, entry: Any, obj: Any
+        self, context: Any, event: Any, entry: Any, transform_obj: Any
     ) -> Tuple[Optional[VoxelCoord], Optional[VoxelCoord], Optional[VoxelCoord]]:
         """Calculate world ray and pick target from mouse event."""
-        if view3d_utils is None:
+        if view3d_utils is None or transform_obj is None:
             return None, None, None
 
         region, rv3d, rx, ry = self.resolve_view3d_region(context, event)
@@ -211,7 +219,7 @@ class BrushSession:
                 return None, None, None
 
             origin_grid, dir_grid = world_ray_to_grid_ray(
-                origin_world, dir_world, obj.matrix_world, voxel_size=entry.voxel_size
+                origin_world, dir_world, transform_obj.matrix_world, voxel_size=entry.voxel_size
             )
             picking_grid = self.pick_grid if self.mode == 'PLACE' and self.pick_grid is not None else entry.grid
             return compute_brush_target(picking_grid, origin_grid, dir_grid, mode=self.mode)
@@ -249,21 +257,23 @@ class BrushSession:
         if is_event_over_ui_region(context, event):
             return {'PASS_THROUGH'}
 
-        obj = context.active_object
+        v_ctx = resolve_volume_context(context)
         if (
-            obj is None
-            or not is_valid_voxel_object(obj)
-            or obj.data.voxel_workspace.uuid != self.volume_uuid
+            v_ctx is None
+            or v_ctx.mesh_uuid != self.volume_uuid
         ):
             self.cleanup()
             stop_editing(context)
             return {'CANCELLED'}
 
-        entry = get_or_load(obj.data)
+        entry = get_or_load(v_ctx.mesh)
         if entry is None:
             self.cleanup()
             stop_editing(context)
             return {'CANCELLED'}
+
+        # Ray conversion uses the root's matrix_world if available, else surface object
+        transform_obj = v_ctx.root if v_ctx.root is not None else v_ctx.surface_object
 
         # 2. Pass-through viewport navigation and undo keys
         if event.type in {
@@ -329,7 +339,7 @@ class BrushSession:
                         dir_world = view3d_utils.region_2d_to_vector_3d(region, rv3d, (rx, ry))
                         if origin_world is not None and dir_world is not None:
                             origin_grid, dir_grid = world_ray_to_grid_ray(
-                                origin_world, dir_world, obj.matrix_world, voxel_size=entry.voxel_size
+                                origin_world, dir_world, transform_obj.matrix_world, voxel_size=entry.voxel_size
                             )
                             hit = trace_grid(entry.grid, origin_grid, dir_grid, max_distance=1000.0)
                             if hit is not None:
@@ -352,7 +362,7 @@ class BrushSession:
                 return {'PASS_THROUGH'}
 
         # Calculate target for current mouse position
-        target_cell, hover_cell, hover_normal = self.get_brush_target(context, event, entry, obj)
+        target_cell, hover_cell, hover_normal = self.get_brush_target(context, event, entry, transform_obj)
 
         # 4. Handle LMB Press (Start Stroke)
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
@@ -403,7 +413,7 @@ class BrushSession:
             self.is_dragging = False
             self.last_target = None
             if self.stroke is not None and len(self.stroke.deltas) > 0:
-                mesh = obj.data
+                mesh = v_ctx.mesh
                 changed_bricks = self.stroke.changed_bricks()
                 entry.grid.dirty_bricks.update(changed_bricks)
                 entry.dirty_bricks.update(changed_bricks)
@@ -465,10 +475,10 @@ class VOXEL_OT_brush(Operator):
 
         active_uuid = get_active_volume_uuid()
         if not active_uuid:
-            obj = context.active_object
-            if is_valid_voxel_object(obj):
+            v_ctx = resolve_volume_context(context)
+            if v_ctx is not None and v_ctx.mesh_uuid:
                 from ..blender.gpu_preview import start_editing
-                active_uuid = obj.data.voxel_workspace.uuid
+                active_uuid = v_ctx.mesh_uuid
                 start_editing(active_uuid, context)
             else:
                 self.report({'WARNING'}, "No active voxel volume for brush")

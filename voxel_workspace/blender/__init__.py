@@ -81,6 +81,26 @@ from .volume_proxy import (
 from .mesh_sync import (
     sync_volume_mesh,
 )
+from .object_graph import (
+    VOXEL_ROOT_FLAG,
+    VOXEL_INSTANCE_UUID_FLAG,
+    VOXEL_RENDER_ROLE_FLAG,
+    VOXEL_ROOT_INSTANCE_UUID_FLAG,
+    VOXEL_FIELD_COLLECTION_NAME,
+    VoxelResolvedContext,
+    RepairReport,
+    is_voxel_root,
+    is_surface_render_object,
+    is_volume_render_object,
+    resolve_voxel_root,
+    resolve_surface_object,
+    resolve_authoritative_mesh,
+    resolve_volume_context,
+    iter_roots_for_mesh,
+    ensure_root_for_surface,
+    repair_voxel_hierarchy,
+    cleanup_stale_voxel_children,
+)
 
 __all__ = [
     "SCHEMA_VERSION",

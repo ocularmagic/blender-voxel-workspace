@@ -24,6 +24,7 @@ from ..core.presets import (
     BUILTIN_PRESETS,
 )
 from ..blender.runtime import get_volume, get_or_load, tag_redraw_all_viewports
+from ..blender.object_graph import resolve_volume_context, resolve_authoritative_mesh, resolve_surface_object
 from ..blender.persistence import serialize_volume, commit_volume_state
 from ..blender.gpu_preview import drop_palette_lut, update_volume_gpu_preview
 from ..geometry.visible_faces import mesh_visible_faces
@@ -164,15 +165,15 @@ class VOXEL_OT_select_palette_color(Operator):
                 scene.voxel_workspace.active_palette_choice = str(self.index)
 
         # Activate corresponding material slot if active object is a voxel mesh
-        obj = context.active_object
-        if obj and obj.type == 'MESH' and hasattr(obj.data, "voxel_workspace"):
+        v_ctx = resolve_volume_context(context)
+        if v_ctx and v_ctx.mesh:
             from ..blender.material_domains import used_surface_indices
-            mesh = obj.data
+            mesh = v_ctx.mesh
             entry = get_or_load(mesh)
             if entry and entry.grid:
                 surf_indices = used_surface_indices(mesh, entry.grid)
-                if self.index in surf_indices:
-                    obj.active_material_index = surf_indices.index(self.index)
+                if self.index in surf_indices and v_ctx.surface_object:
+                    v_ctx.surface_object.active_material_index = surf_indices.index(self.index)
 
         tag_redraw_all_viewports()
         return {'FINISHED'}
@@ -204,10 +205,11 @@ class VOXEL_OT_edit_palette_material(Operator):
         material_choice: EnumProperty(name="Material", items=_material_items)
 
     def invoke(self, context, event):
-        obj = context.active_object
-        if obj is None or obj.type != 'MESH' or not hasattr(obj.data, "voxel_workspace"):
+        v_ctx = resolve_volume_context(context)
+        if v_ctx is None or v_ctx.mesh is None:
             return {'CANCELLED'}
-        entry = next((item for item in obj.data.voxel_workspace.palette if item.index == self.index), None)
+        mesh = v_ctx.mesh
+        entry = next((item for item in mesh.voxel_workspace.palette if item.index == self.index), None)
         if entry is None:
             return {'CANCELLED'}
         context.scene.voxel_workspace.active_palette_index = self.index
@@ -223,10 +225,10 @@ class VOXEL_OT_edit_palette_material(Operator):
         layout.label(text="Use Material Properties or Shader Editor for the full node graph.", icon='INFO')
 
     def execute(self, context):
-        obj = context.active_object
-        if obj is None or obj.type != 'MESH' or not hasattr(obj.data, "voxel_workspace"):
+        v_ctx = resolve_volume_context(context)
+        if v_ctx is None or v_ctx.mesh is None:
             return {'CANCELLED'}
-        mesh = obj.data
+        mesh = v_ctx.mesh
         entry = next((item for item in mesh.voxel_workspace.palette if item.index == self.index), None)
         if entry is None:
             return {'CANCELLED'}
@@ -281,12 +283,12 @@ class VOXEL_OT_sync_display_to_material_color(Operator):
         index: IntProperty(name="Index", default=1, min=1, max=255)
 
     def execute(self, context):
-        obj = context.active_object
-        if obj is None or obj.type != 'MESH' or not hasattr(obj.data, "voxel_workspace"):
+        v_ctx = resolve_volume_context(context)
+        if v_ctx is None or v_ctx.mesh is None:
             self.report({'WARNING'}, "No active voxel volume")
             return {'CANCELLED'}
 
-        entry = next((e for e in obj.data.voxel_workspace.palette if e.index == self.index), None)
+        entry = next((e for e in v_ctx.mesh.voxel_workspace.palette if e.index == self.index), None)
         if entry is None or entry.material is None:
             self.report({'WARNING'}, "No material bound to this palette entry")
             return {'CANCELLED'}
@@ -311,12 +313,12 @@ class VOXEL_OT_sync_material_to_display_color(Operator):
         index: IntProperty(name="Index", default=1, min=1, max=255)
 
     def execute(self, context):
-        obj = context.active_object
-        if obj is None or obj.type != 'MESH' or not hasattr(obj.data, "voxel_workspace"):
+        v_ctx = resolve_volume_context(context)
+        if v_ctx is None or v_ctx.mesh is None:
             self.report({'WARNING'}, "No active voxel volume")
             return {'CANCELLED'}
 
-        entry = next((e for e in obj.data.voxel_workspace.palette if e.index == self.index), None)
+        entry = next((e for e in v_ctx.mesh.voxel_workspace.palette if e.index == self.index), None)
         if entry is None or entry.material is None or not entry.material.use_nodes:
             self.report({'WARNING'}, "No node material bound to this palette entry")
             return {'CANCELLED'}
@@ -327,7 +329,7 @@ class VOXEL_OT_sync_material_to_display_color(Operator):
             alpha = bsdf.inputs["Alpha"].default_value if "Alpha" in bsdf.inputs else 1.0
             entry.color = (float(col[0]), float(col[1]), float(col[2]), float(alpha))
             from ..blender.gpu_preview import drop_palette_lut
-            drop_palette_lut(obj.data.voxel_workspace.uuid)
+            drop_palette_lut(v_ctx.mesh_uuid)
             tag_redraw_all_viewports()
             self.report({'INFO'}, "Updated palette display color from Material Base Color")
         else:
@@ -355,12 +357,12 @@ class VOXEL_OT_set_palette_material_domain(Operator):
         )
 
     def execute(self, context):
-        obj = context.active_object
-        if obj is None or obj.type != 'MESH' or not hasattr(obj.data, "voxel_workspace"):
+        v_ctx = resolve_volume_context(context)
+        if v_ctx is None or v_ctx.mesh is None:
             self.report({'WARNING'}, "No active voxel volume")
             return {'CANCELLED'}
 
-        mesh = obj.data
+        mesh = v_ctx.mesh
         entry = next((e for e in mesh.voxel_workspace.palette if e.index == self.index), None)
         if entry is None:
             return {'CANCELLED'}
@@ -419,20 +421,21 @@ class VOXEL_OT_make_material_single_user(Operator):
         index: IntProperty(name="Index", default=1, min=1, max=255)
 
     def execute(self, context):
-        obj = context.active_object
-        if obj is None or obj.type != 'MESH' or not hasattr(obj.data, "voxel_workspace"):
+        v_ctx = resolve_volume_context(context)
+        if v_ctx is None or v_ctx.mesh is None:
             self.report({'WARNING'}, "No active voxel volume")
             return {'CANCELLED'}
 
-        entry = next((e for e in obj.data.voxel_workspace.palette if e.index == self.index), None)
+        mesh = v_ctx.mesh
+        entry = next((e for e in mesh.voxel_workspace.palette if e.index == self.index), None)
         if entry is None:
             return {'CANCELLED'}
 
         from ..blender.material_domains import make_entry_material_single_user, reconcile_surface_slots
-        make_entry_material_single_user(obj.data, entry)
-        entry_vol = get_or_load(obj.data)
+        make_entry_material_single_user(mesh, entry)
+        entry_vol = get_or_load(mesh)
         if entry_vol and entry_vol.grid:
-            reconcile_surface_slots(obj.data, entry_vol.grid)
+            reconcile_surface_slots(mesh, entry_vol.grid)
 
         tag_redraw_all_viewports()
         self.report({'INFO'}, f"Material for Color [{self.index}] is now single-user")
@@ -463,12 +466,12 @@ class VOXEL_OT_add_palette_color(Operator):
         )
 
     def execute(self, context):
-        obj = context.active_object
-        if obj is None or obj.type != 'MESH' or not hasattr(obj.data, "voxel_workspace"):
+        v_ctx = resolve_volume_context(context)
+        if v_ctx is None or v_ctx.mesh is None:
             self.report({'WARNING'}, "No active voxel volume")
             return {'CANCELLED'}
 
-        mesh = obj.data
+        mesh = v_ctx.mesh
         props = mesh.voxel_workspace
         from ..blender.properties import ensure_palette
         from ..blender.material_domains import initialize_palette_entry
@@ -529,12 +532,12 @@ class VOXEL_OT_duplicate_palette_color(Operator):
         )
 
     def execute(self, context):
-        obj = context.active_object
-        if obj is None or obj.type != 'MESH' or not hasattr(obj.data, "voxel_workspace"):
+        v_ctx = resolve_volume_context(context)
+        if v_ctx is None or v_ctx.mesh is None:
             self.report({'WARNING'}, "No active voxel volume")
             return {'CANCELLED'}
 
-        mesh = obj.data
+        mesh = v_ctx.mesh
         props = mesh.voxel_workspace
         from ..blender.properties import ensure_palette
         ensure_palette(mesh)
@@ -586,9 +589,9 @@ def _replacement_items(self, context):
     items = []
     # Option 0: Erase / Empty
     items.append(("0", "0: Erase (Empty Space)", "Erase affected voxels to empty space", 0))
-    obj = context.active_object if context else None
-    if obj is not None and hasattr(obj.data, "voxel_workspace"):
-        props = obj.data.voxel_workspace
+    mesh = resolve_authoritative_mesh(context)
+    if mesh is not None and hasattr(mesh, "voxel_workspace"):
+        props = mesh.voxel_workspace
         for entry in props.palette:
             if entry.index > 0 and entry.index != self.index:
                 name_str = f"{entry.index}: {entry.name}" if entry.name else f"{entry.index}: Color {entry.index}"
@@ -634,10 +637,10 @@ class VOXEL_OT_remove_palette_color(Operator):
         )
 
     def invoke(self, context, event):
-        obj = context.active_object
-        if obj is None or obj.type != 'MESH' or not hasattr(obj.data, "voxel_workspace"):
+        v_ctx = resolve_volume_context(context)
+        if v_ctx is None or v_ctx.mesh is None:
             return {'CANCELLED'}
-        mesh = obj.data
+        mesh = v_ctx.mesh
         counts = get_used_palette_counts(mesh)
         used_count = counts.get(self.index, 0)
         if used_count > 0:
@@ -652,8 +655,8 @@ class VOXEL_OT_remove_palette_color(Operator):
 
     def draw(self, context):
         layout = self.layout
-        obj = context.active_object
-        mesh = obj.data if obj else None
+        v_ctx = resolve_volume_context(context)
+        mesh = v_ctx.mesh if v_ctx else None
         counts = get_used_palette_counts(mesh) if mesh else {}
         used_count = counts.get(self.index, 0)
 
@@ -663,8 +666,8 @@ class VOXEL_OT_remove_palette_color(Operator):
             layout.label(text="WARNING: Voxels will be permanently erased!", icon='ERROR')
 
     def execute(self, context):
-        obj = context.active_object
-        if obj is None or obj.type != 'MESH' or not hasattr(obj.data, "voxel_workspace"):
+        v_ctx = resolve_volume_context(context)
+        if v_ctx is None or v_ctx.mesh is None:
             self.report({'WARNING'}, "No active voxel volume")
             return {'CANCELLED'}
 
@@ -672,7 +675,7 @@ class VOXEL_OT_remove_palette_color(Operator):
             self.report({'ERROR'}, "Index 0 is reserved empty and cannot be removed")
             return {'CANCELLED'}
 
-        mesh = obj.data
+        mesh = v_ctx.mesh
         props = mesh.voxel_workspace
 
         if self.replacement_index == -1:
@@ -759,12 +762,12 @@ class VOXEL_OT_eyedropper(Operator):
         return result
 
     def invoke(self, context, event):
-        obj = context.active_object
-        if obj is None or obj.type != 'MESH' or not hasattr(obj.data, "voxel_workspace"):
+        v_ctx = resolve_volume_context(context)
+        if v_ctx is None or v_ctx.mesh is None:
             self.report({'WARNING'}, "No active voxel volume")
             return {'CANCELLED'}
 
-        entry = get_or_load(obj.data)
+        entry = get_or_load(v_ctx.mesh)
         if entry is None or entry.grid is None:
             return {'CANCELLED'}
 
@@ -790,10 +793,11 @@ class VOXEL_OT_eyedropper(Operator):
             return {'PASS_THROUGH'}
 
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
-            obj = context.active_object
-            if obj is not None and hasattr(obj.data, "voxel_workspace"):
-                entry = get_or_load(obj.data)
+            v_ctx = resolve_volume_context(context)
+            if v_ctx is not None and v_ctx.mesh is not None:
+                entry = get_or_load(v_ctx.mesh)
                 if entry is not None and entry.grid is not None:
+                    transform_obj = v_ctx.root if v_ctx.root is not None else v_ctx.surface_object
                     # Raycast into viewport
                     try:
                         import bpy_extras.view3d_utils as view3d_utils
@@ -808,9 +812,9 @@ class VOXEL_OT_eyedropper(Operator):
                                 ry = event.mouse_y - region.y
                                 origin_world = view3d_utils.region_2d_to_origin_3d(region, rv3d, (rx, ry))
                                 dir_world = view3d_utils.region_2d_to_vector_3d(region, rv3d, (rx, ry))
-                                if origin_world is not None and dir_world is not None:
+                                if origin_world is not None and dir_world is not None and transform_obj is not None:
                                     origin_grid, dir_grid = world_ray_to_grid_ray(
-                                        origin_world, dir_world, obj.matrix_world, voxel_size=entry.voxel_size
+                                        origin_world, dir_world, transform_obj.matrix_world, voxel_size=entry.voxel_size
                                     )
                                     hit = trace_grid(entry.grid, origin_grid, dir_grid, max_distance=1000.0)
                                     if hit is not None:
@@ -836,16 +840,16 @@ class VOXEL_OT_compact_palette(Operator):
     bl_options = {'REGISTER'}
 
     def invoke(self, context, event):
-        obj = context.active_object
-        if obj is None or obj.type != 'MESH' or not hasattr(obj.data, "voxel_workspace"):
+        v_ctx = resolve_volume_context(context)
+        if v_ctx is None or v_ctx.mesh is None:
             self.report({'WARNING'}, "No active voxel volume")
             return {'CANCELLED'}
         return context.window_manager.invoke_props_dialog(self)
 
     def draw(self, context):
         layout = self.layout
-        obj = context.active_object
-        mesh = obj.data if obj else None
+        v_ctx = resolve_volume_context(context)
+        mesh = v_ctx.mesh if v_ctx else None
         counts = get_used_palette_counts(mesh) if mesh else {}
         used_indices = sorted(counts.keys())
         total_voxels = sum(counts.values())
@@ -858,12 +862,12 @@ class VOXEL_OT_compact_palette(Operator):
         layout.label(text="Unused palette entries will be purged.")
 
     def execute(self, context):
-        obj = context.active_object
-        if obj is None or obj.type != 'MESH' or not hasattr(obj.data, "voxel_workspace"):
+        v_ctx = resolve_volume_context(context)
+        if v_ctx is None or v_ctx.mesh is None:
             self.report({'WARNING'}, "No active voxel volume")
             return {'CANCELLED'}
 
-        mesh = obj.data
+        mesh = v_ctx.mesh
         props = mesh.voxel_workspace
         counts = get_used_palette_counts(mesh)
 
@@ -980,12 +984,13 @@ class VOXEL_OT_save_palette_preset(Operator):
         )
 
     def invoke(self, context, event):
-        obj = context.active_object
-        if obj is None or obj.type != 'MESH' or not hasattr(obj.data, "voxel_workspace"):
+        v_ctx = resolve_volume_context(context)
+        if v_ctx is None or v_ctx.mesh is None:
             self.report({'WARNING'}, "No active voxel volume")
             return {'CANCELLED'}
+        name_hint = v_ctx.root.name if v_ctx.root else (v_ctx.surface_object.name if v_ctx.surface_object else "Volume")
         if not self.preset_name or self.preset_name == "My Palette":
-            self.preset_name = f"{obj.name} Palette"
+            self.preset_name = f"{name_hint} Palette"
         if not self.filepath:
             import tempfile
             self.filepath = str(Path(tempfile.gettempdir()) / f"{self.preset_name.replace(' ', '_').lower()}.json")
@@ -993,8 +998,8 @@ class VOXEL_OT_save_palette_preset(Operator):
         return {'RUNNING_MODAL'}
 
     def execute(self, context):
-        obj = context.active_object
-        if obj is None or obj.type != 'MESH' or not hasattr(obj.data, "voxel_workspace"):
+        v_ctx = resolve_volume_context(context)
+        if v_ctx is None or v_ctx.mesh is None:
             self.report({'WARNING'}, "No active voxel volume")
             return {'CANCELLED'}
 
@@ -1002,7 +1007,7 @@ class VOXEL_OT_save_palette_preset(Operator):
             self.report({'ERROR'}, "No destination file path specified")
             return {'CANCELLED'}
 
-        mesh = obj.data
+        mesh = v_ctx.mesh
         props = mesh.voxel_workspace
         color_entries = []
 
@@ -1071,12 +1076,12 @@ class VOXEL_OT_load_palette_preset(Operator):
         )
 
     def invoke(self, context, event):
-        obj = context.active_object
-        if obj is None or obj.type != 'MESH' or not hasattr(obj.data, "voxel_workspace"):
+        v_ctx = resolve_volume_context(context)
+        if v_ctx is None or v_ctx.mesh is None:
             self.report({'WARNING'}, "No active voxel volume")
             return {'CANCELLED'}
 
-        counts = get_used_palette_counts(obj.data)
+        counts = get_used_palette_counts(v_ctx.mesh)
         has_used_voxels = bool(counts)
         # For empty volumes, default to REPLACE; for used volumes, default to APPEND
         self.import_mode = "APPEND" if has_used_voxels else "REPLACE"
@@ -1085,8 +1090,8 @@ class VOXEL_OT_load_palette_preset(Operator):
 
     def draw(self, context):
         layout = self.layout
-        obj = context.active_object
-        counts = get_used_palette_counts(obj.data) if (obj and obj.type == 'MESH') else {}
+        v_ctx = resolve_volume_context(context)
+        counts = get_used_palette_counts(v_ctx.mesh) if (v_ctx and v_ctx.mesh) else {}
         has_used_voxels = bool(counts)
 
         layout.prop(self, "preset_source")
@@ -1102,8 +1107,8 @@ class VOXEL_OT_load_palette_preset(Operator):
             layout.label(text="Volume is empty. Palette will be loaded starting at index 1.")
 
     def execute(self, context):
-        obj = context.active_object
-        if obj is None or obj.type != 'MESH' or not hasattr(obj.data, "voxel_workspace"):
+        v_ctx = resolve_volume_context(context)
+        if v_ctx is None or v_ctx.mesh is None:
             self.report({'WARNING'}, "No active voxel volume")
             return {'CANCELLED'}
 
@@ -1127,7 +1132,7 @@ class VOXEL_OT_load_palette_preset(Operator):
             self.report({'WARNING'}, "Preset contains no colors")
             return {'CANCELLED'}
 
-        mesh = obj.data
+        mesh = v_ctx.mesh
         props = mesh.voxel_workspace
         from ..blender.material_domains import palette_materials, cleanup_owned_materials
         old_materials = palette_materials(mesh)

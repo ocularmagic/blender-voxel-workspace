@@ -560,6 +560,7 @@ def _draw_callback() -> None:
         return
 
     from .runtime import get_active_volume_uuid, get_or_load
+    from .object_graph import resolve_volume_context, resolve_authoritative_mesh, resolve_voxel_root, resolve_surface_object
 
     active_uuid = get_active_volume_uuid()
     if not active_uuid:
@@ -570,14 +571,13 @@ def _draw_callback() -> None:
         return
 
     # Find the object corresponding to active_uuid
-    obj = context.active_object
-    if (
-        obj is None
-        or not hasattr(obj, "data")
-        or not hasattr(obj.data, "voxel_workspace")
-        or obj.data.voxel_workspace.uuid != active_uuid
-    ):
-        obj = None
+    v_ctx = resolve_volume_context(context)
+    obj = None
+    if v_ctx is not None and v_ctx.mesh_uuid == active_uuid:
+        obj = v_ctx.root if v_ctx.root is not None else v_ctx.surface_object
+        mesh = v_ctx.mesh
+    else:
+        mesh = None
         if hasattr(context, "scene") and hasattr(context.scene, "objects"):
             for o in context.scene.objects:
                 if (
@@ -585,12 +585,14 @@ def _draw_callback() -> None:
                     and hasattr(o.data, "voxel_workspace")
                     and o.data.voxel_workspace.uuid == active_uuid
                 ):
-                    obj = o
+                    root = resolve_voxel_root(o)
+                    obj = root if root is not None else o
+                    mesh = o.data
                     break
-    if obj is None:
+    if obj is None or mesh is None:
         return
 
-    entry = get_or_load(obj.data)
+    entry = get_or_load(mesh)
     if entry is None:
         return
 

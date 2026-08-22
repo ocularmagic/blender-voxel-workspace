@@ -179,6 +179,26 @@ class VoxelObjectProperties(PropertyGroup):
             description="True if this object is a voxel volume instance",
             default=False,
         )
+        is_voxel_root: BoolProperty(
+            name="Is Voxel Root",
+            description="True if this object is the canonical root Empty for a voxel field",
+            default=False,
+        )
+        voxel_instance_uuid: StringProperty(
+            name="Voxel Instance UUID",
+            description="Instance UUID of this root or child",
+            default="",
+        )
+        voxel_render_role: StringProperty(
+            name="Voxel Render Role",
+            description="Render role: SURFACE or VOLUME",
+            default="",
+        )
+        surface_object: PointerProperty(
+            type=bpy.types.Object,
+            name="Surface Object",
+            description="Authoritative Surface mesh child object for this root",
+        )
         is_editing: BoolProperty(
             name="Is Editing",
             description="True if this volume is currently being edited in voxel mode",
@@ -355,11 +375,28 @@ def init_voxel_mesh_properties(
     return uuid_str
 
 
-def init_voxel_object_properties(obj: "bpy.types.Object") -> None:
+def init_voxel_object_properties(
+    obj: "bpy.types.Object",
+    is_root: bool = False,
+    instance_uuid: Optional[str] = None,
+    render_role: str = "",
+    surface_obj: Optional["bpy.types.Object"] = None,
+) -> None:
     """Initialize interaction flags on a Blender Object."""
     props = obj.voxel_workspace
     props.is_voxel_object = True
     props.is_editing = False
+    props.is_voxel_root = is_root
+    if instance_uuid:
+        props.voxel_instance_uuid = instance_uuid
+        obj["voxel_instance_uuid"] = instance_uuid
+    if render_role:
+        props.voxel_render_role = render_role
+        obj["voxel_render_role"] = render_role
+    if surface_obj is not None:
+        props.surface_object = surface_obj
+    if is_root:
+        obj["is_voxel_root"] = True
 
 
 def get_volume_uuid(target: Union["bpy.types.Mesh", "bpy.types.Object", None]) -> Optional[str]:
