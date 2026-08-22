@@ -2,6 +2,7 @@
 from pathlib import Path
 from time import perf_counter
 from typing import Any, List, Tuple
+import numpy as np
 
 try:
     import bpy
@@ -30,51 +31,69 @@ def _is_voxel_object(obj: Any) -> bool:
 
 
 def replace_volume_palette(mesh: Any, palette: List[Tuple[float, float, float, float]]) -> List[Any]:
-    """Replace the mesh palette collection with owned default surface materials. Index 0 remains empty."""
-    from ..blender.material_domains import initialize_palette_entry, palette_materials
+    """Replace only the authoritative Surface Palette with imported defaults."""
+    from ..blender.material_domains import initialize_surface_entry, palette_materials
     props = mesh.voxel_workspace
-    old_materials = palette_materials(mesh)
-    props.palette.clear()
-    empty = props.palette.add()
+    old_materials = palette_materials(mesh, domain="SURFACE")
+    props.surface_palette.clear()
+    empty = props.surface_palette.add()
     empty.index = 0
     empty.name = "Empty"
     empty.color = DEFAULT_PALETTE[0]
-    empty.material_domain = "SURFACE"
     empty.material_owned = True
     for idx, color in enumerate(palette):
         if idx == 0:
             continue
         if idx > 255:
             break
-        item = props.palette.add()
-        initialize_palette_entry(
+        item = props.surface_palette.add()
+        initialize_surface_entry(
             mesh,
             item,
             index=idx,
             name=f"Imported {idx}",
             color=tuple(float(c) for c in color),
-            domain="SURFACE",
         )
     return old_materials
+
+
+def _as_surface_tagged_grid(grid: Any) -> Any:
+    """Convert voxelizer scalar output to the schema-3 tagged Surface authority."""
+    from ..core.tagged_grid import TaggedBrick, TaggedVoxelGrid, VoxelDomain
+    if isinstance(grid, TaggedVoxelGrid):
+        return grid
+    tagged = TaggedVoxelGrid(
+        extent_min=grid.extent_min,
+        extent_max_exclusive=grid.extent_max_exclusive,
+        brick_size=grid.brick_size,
+    )
+    for coord, indices in grid.bricks.items():
+        brick = TaggedBrick(grid.brick_size)
+        brick.indices = indices.copy()
+        brick.domains = np.where(indices > 0, int(VoxelDomain.SURFACE), 0).astype(np.uint8)
+        tagged.bricks[coord] = brick
+    tagged.dirty_bricks.update(tagged.bricks)
+    return tagged
 
 
 def _commit_import(obj: Any, result: Any, undo_message: str) -> None:
     mesh = obj.data
     uuid_str = mesh.voxel_workspace.uuid
+    tagged_grid = _as_surface_tagged_grid(result.grid)
     entry = get_or_load(mesh)
     if entry is None:
         from ..blender.runtime import register_volume
 
         entry = register_volume(
             uuid_str,
-            grid=result.grid,
+            grid=tagged_grid,
             voxel_size=float(mesh.voxel_workspace.voxel_size),
             brick_size=int(mesh.voxel_workspace.brick_size),
             extent_min=tuple(mesh.voxel_workspace.extent_min),
             extent_max=tuple(mesh.voxel_workspace.extent_max),
         )
     else:
-        entry.grid = result.grid
+        entry.grid = tagged_grid
         entry.cpu_buffers.clear()
         entry.volume_proxy_buffers.clear()
         entry.gpu_batches.clear()

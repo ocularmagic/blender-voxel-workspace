@@ -91,37 +91,49 @@ class VOXEL_PT_main_panel(Panel):
         # 3. Dynamic Palette Section for Active Volume
         scene = context.scene
         if scene is not None and hasattr(scene, "voxel_workspace"):
-            pal_box = layout.box()
-            pal_header = pal_box.row()
-            pal_header.label(text="Palette", icon='COLOR')
-            if is_voxel and mesh is not None:
-                pal_header.operator("voxel.eyedropper", text="Pick", icon='EYEDROPPER')
-                pal_header.operator("voxel.add_palette_color", text="Add", icon='ADD')
-                pal_header.operator("voxel.compact_palette", text="Compact", icon='ALIGN_JUSTIFY')
-
             palette_props = scene.voxel_workspace
-            active_index = palette_props.active_palette_index
+            pal_tab = getattr(palette_props, "active_palette_tab", "SURFACE").upper()
+            pal_box = layout.box()
+
+            # Material Type / Palette Selector Tabs
+            tab_row = pal_box.row(align=True)
+            tab_row.prop(palette_props, "active_palette_tab", expand=True)
+
+            pal_header = pal_box.row()
+            pal_header.label(text=f"{pal_tab.title()} Palette", icon='COLOR')
+            if is_voxel and mesh is not None:
+                op_pick = pal_header.operator("voxel.eyedropper", text="Pick", icon='EYEDROPPER')
+                op_add = pal_header.operator("voxel.add_palette_color", text="Add", icon='ADD')
+                op_add.palette_type = pal_tab
+                op_comp = pal_header.operator("voxel.compact_palette", text="Compact", icon='ALIGN_JUSTIFY')
+                op_comp.palette_type = pal_tab
+
+            active_index = palette_props.active_volume_palette_index if pal_tab == "VOLUME" else palette_props.active_surface_palette_index
 
             if is_voxel and mesh is not None:
                 props = mesh.voxel_workspace
-                counts = get_used_palette_counts(mesh)
+                counts = get_used_palette_counts(mesh, palette_type=pal_tab)
 
                 # Filter and Preset Tools Row
                 top_row = pal_box.row(align=True)
                 top_row.prop(palette_props, "palette_filter", expand=True)
                 preset_sub = top_row.row(align=True)
-                preset_sub.operator("voxel.load_palette_preset", text="Load Preset", icon='IMPORT')
-                preset_sub.operator("voxel.save_palette_preset", text="Save Preset", icon='EXPORT')
+                load_op = preset_sub.operator("voxel.load_palette_preset", text="Load Preset", icon='IMPORT')
+                load_op.palette_type = pal_tab
+                save_op = preset_sub.operator("voxel.save_palette_preset", text="Save Preset", icon='EXPORT')
+                save_op.palette_type = pal_tab
 
-                # Collect non-zero entries sorted by index
-                all_entries = sorted([e for e in props.palette if e.index > 0], key=lambda e: e.index)
+                # Collect non-zero entries from the active typed palette
+                from ..blender.material_domains import get_palette
+                target_palette = get_palette(mesh, pal_tab)
+                all_entries = sorted([e for e in target_palette if e.index > 0], key=lambda e: e.index)
+
                 if palette_props.palette_filter == "USED":
                     entries = [e for e in all_entries if counts.get(e.index, 0) > 0]
                 else:
                     entries = all_entries
 
-                # Swatch Grid: Square buttons with swatch color fill, highlighted active border, and small center dot if used
-                # 8 swatches per row, scale_y=1.0 for square button outline
+                # Swatch Grid: Square buttons with swatch color fill
                 grid_flow = pal_box.grid_flow(row_major=True, columns=8, even_columns=True, even_rows=True)
                 for entry_item in entries:
                     idx = entry_item.index
@@ -138,21 +150,22 @@ class VOXEL_PT_main_panel(Panel):
                     row = cell_box.row(align=True)
                     row.scale_y = 1.0
                     row.scale_x = 1.0
-                    # Square button with custom swatch icon (color fill + active border + center used dot) and no number text
                     op = row.operator(
-                        "voxel.edit_palette_material",
+                        "voxel.select_palette_color",
                         text="",
                         icon_value=icon_id if icon_id != 0 else 0,
                     )
+                    op.palette_type = pal_tab
                     op.index = idx
 
                 # Active Swatch Editor Details
-                active_entry = next((e for e in props.palette if e.index == active_index), None)
+                active_entry = next((e for e in target_palette if e.index == active_index), None)
+
                 if active_entry is not None:
                     edit_box = pal_box.box()
                     active_count = counts.get(active_index, 0)
                     edit_box.label(
-                        text=f"Color [{active_index}]  •  {active_count} voxels",
+                        text=f"{pal_tab.title()} Color [{active_index}]  •  {active_count} voxels",
                         icon='COLOR',
                     )
                     # Color picker for in-place editing
@@ -163,27 +176,32 @@ class VOXEL_PT_main_panel(Panel):
                     # Native Material Controls
                     mat_box = edit_box.box()
                     mat_box.label(text="Native Blender Material", icon='MATERIAL')
-                    mat_box.label(text=f"Domain: {active_entry.material_domain.title()}")
                     mat_box.label(text=f"Material: {active_entry.material.name if active_entry.material else 'None'}")
                     edit_op = mat_box.operator("voxel.edit_palette_material", text="Edit Material Binding…", icon='PREFERENCES')
+                    edit_op.palette_type = pal_tab
                     edit_op.index = active_index
 
                     sync_row = mat_box.row(align=True)
                     op_apply = sync_row.operator("voxel.sync_display_to_material", text="Apply Display", icon='FORWARD')
+                    op_apply.palette_type = pal_tab
                     op_apply.index = active_index
                     op_read = sync_row.operator("voxel.sync_material_to_display", text="Read Base Color", icon='BACK')
+                    op_read.palette_type = pal_tab
                     op_read.index = active_index
 
                     if not active_entry.material_owned and active_entry.material is not None:
                         op_single = mat_box.operator("voxel.make_material_single_user", text="Make Single User", icon='UNLINKED')
+                        op_single.palette_type = pal_tab
                         op_single.index = active_index
 
                     # Duplicate & Remove Actions
                     btn_row = edit_box.row(align=True)
                     dup_op = btn_row.operator("voxel.duplicate_palette_color", text="Duplicate", icon='DUPLICATE')
+                    dup_op.palette_type = pal_tab
                     dup_op.source_index = active_index
 
                     rem_op = btn_row.operator("voxel.remove_palette_color", text="Remove", icon='TRASH')
+                    rem_op.palette_type = pal_tab
                     rem_op.index = active_index
                     rem_op.replacement_index = 1 if active_index != 1 else (all_entries[1].index if len(all_entries) > 1 else 0)
             else:
@@ -200,30 +218,32 @@ class VOXEL_PT_main_panel(Panel):
             "show_voxel_edges",
             text="Show Voxel Edges",
         )
-        # Active Color Indicator near brush controls
-        active_idx = context.scene.voxel_workspace.active_palette_index
-        tools_col.label(text=f"Active Brush Color: Index [{active_idx}]", icon='COLOR')
+        # Active typed palette indicator near brush controls
+        tool_mode = context.scene.voxel_workspace.active_tool
+        if tool_mode == 'ADD_VOLUME':
+            active_idx = context.scene.voxel_workspace.active_volume_palette_index
+            active_label = "Volume"
+        else:
+            active_idx = context.scene.voxel_workspace.active_surface_palette_index
+            active_label = "Surface"
+        tools_col.label(text=f"Active {active_label}: Index [{active_idx}]", icon='COLOR')
         tools_col.separator(factor=0.5)
 
-        # Start Place
-        if hasattr(bpy.ops, "voxel") and hasattr(bpy.ops.voxel, "start_place"):
-            button = tools_col.row(align=True)
-            button.scale_y = 1.4
-            button.operator("voxel.start_place", text="PLACE VOXELS", icon='BRUSH_DATA')
-        else:
-            row = tools_col.row()
-            row.enabled = False
-            row.label(text="Start Place", icon='BRUSH_DATA')
-
-        # Start Erase
-        if hasattr(bpy.ops, "voxel") and hasattr(bpy.ops.voxel, "start_erase"):
-            button = tools_col.row(align=True)
-            button.scale_y = 1.4
-            button.operator("voxel.start_erase", text="ERASE VOXELS", icon='REMOVE')
-        else:
-            row = tools_col.row()
-            row.enabled = False
-            row.label(text="Start Erase", icon='REMOVE')
+        # Explicit tagged voxel tools
+        tool_specs = (
+            ("voxel.start_surface", "ADD SURFACE", 'BRUSH_DATA'),
+            ("voxel.start_volume", "ADD VOLUME", 'MOD_FLUIDSIM'),
+            ("voxel.start_erase", "ERASE VOXEL", 'REMOVE'),
+        )
+        for operator_id, label, icon in tool_specs:
+            if hasattr(bpy.ops, "voxel") and hasattr(bpy.ops.voxel, operator_id.split(".")[-1]):
+                button = tools_col.row(align=True)
+                button.scale_y = 1.4
+                button.operator(operator_id, text=label, icon=icon)
+            else:
+                row = tools_col.row()
+                row.enabled = False
+                row.label(text=label.title(), icon=icon)
 
         # Stop Editing
         if hasattr(bpy.ops, "voxel") and hasattr(bpy.ops.voxel, "stop_editing"):

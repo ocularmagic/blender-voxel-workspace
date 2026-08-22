@@ -27,15 +27,8 @@ def get_palette(mesh: Any, domain: Union[VoxelDomain, str, int] = VoxelDomain.SU
         "VOLUME" if int(domain) == int(VoxelDomain.VOLUME) else "SURFACE"
     )
     if dom_str.upper() == "VOLUME":
-        if hasattr(props, "volume_palette") and len(props.volume_palette) > 0:
-            return props.volume_palette
-        # Fallback to filtering legacy palette
-        return [e for e in props.palette if getattr(e, "material_domain", "SURFACE") == "VOLUME"]
-    else:
-        if hasattr(props, "surface_palette") and len(props.surface_palette) > 0:
-            return props.surface_palette
-        # Fallback to filtering legacy palette
-        return [e for e in props.palette if getattr(e, "material_domain", "SURFACE") == "SURFACE"]
+        return props.volume_palette if hasattr(props, "volume_palette") else []
+    return props.surface_palette if hasattr(props, "surface_palette") else []
 
 
 def find_entry(mesh: Any, domain: Union[VoxelDomain, str, int], index: int) -> Optional[Any]:
@@ -165,8 +158,6 @@ def copy_entry_material_for_mesh(src_entry: Any, dst_entry: Any, new_mesh_uuid: 
     if bpy is None or src_entry is None or dst_entry is None:
         return
 
-    if hasattr(dst_entry, "material_domain") and hasattr(src_entry, "material_domain"):
-        dst_entry.material_domain = getattr(src_entry, "material_domain", "SURFACE")
     dst_entry.material_owned = getattr(src_entry, "material_owned", True)
     src_mat = getattr(src_entry, "material", None)
 
@@ -274,8 +265,6 @@ def palette_materials(
         mats.extend([e.material for e in props.surface_palette if getattr(e, "material", None) is not None])
     if hasattr(props, "volume_palette"):
         mats.extend([e.material for e in props.volume_palette if getattr(e, "material", None) is not None])
-    if not mats and hasattr(props, "palette"):
-        mats.extend([e.material for e in props.palette if getattr(e, "material", None) is not None])
     return mats
 
 
@@ -315,6 +304,18 @@ def set_generated_surface_base_color(entry: Any, color: Optional[Tuple[float, fl
         if "Alpha" in bsdf.inputs and len(col) > 3:
             bsdf.inputs["Alpha"].default_value = float(col[3])
         return True
+    return False
+
+
+def set_generated_volume_color(entry: Any, color: Optional[Tuple[float, float, float, float]] = None) -> bool:
+    """Update Color on a recognized Principled Volume node."""
+    if entry is None or entry.material is None or not entry.material.use_nodes:
+        return False
+    col = color or tuple(entry.color)
+    for node in entry.material.node_tree.nodes:
+        if node.bl_idname == "ShaderNodeVolumePrincipled" and "Color" in node.inputs:
+            node.inputs["Color"].default_value = (float(col[0]), float(col[1]), float(col[2]), 1.0)
+            return True
     return False
 
 
@@ -381,16 +382,22 @@ def used_volume_indices(mesh: Any, grid: Any) -> List[int]:
         return []
     
     props = mesh.voxel_workspace
+    if hasattr(props, "volume_palette") and len(props.volume_palette) > 0:
+        vol_indices = {e.index for e in props.volume_palette if e.index > 0}
+        # Only treat index as volume if it is in volume_palette and NOT in surface_palette, or if explicitly in legacy palette marked as VOLUME
+        if hasattr(props, "surface_palette") and len(props.surface_palette) > 0:
+            surf_indices = {e.index for e in props.surface_palette if e.index > 0}
+            vol_only = vol_indices - surf_indices
+            if (used & vol_only):
+                return sorted(list(used & vol_only))
+        elif (used & vol_indices):
+            return sorted(list(used & vol_indices))
+
     if hasattr(props, "palette") and len(props.palette) > 0:
         entry_domain_map = {e.index: getattr(e, "material_domain", "SURFACE") for e in props.palette}
         volume_used = [idx for idx in used if entry_domain_map.get(idx, "SURFACE") == "VOLUME"]
         if volume_used:
             return sorted(volume_used)
-
-    if hasattr(props, "volume_palette") and len(props.volume_palette) > 0:
-        vol_indices = {e.index for e in props.volume_palette if e.index > 0}
-        if (used & vol_indices):
-            return sorted(list(used & vol_indices))
 
     return []
 
@@ -445,8 +452,6 @@ def initialize_surface_entry(
     entry.index = index
     entry.name = name
     entry.color = color
-    if hasattr(entry, "material_domain"):
-        entry.material_domain = "SURFACE"
     entry.material_owned = True
     entry.material = create_default_surface_material(mesh, entry, base_color=color)
 
@@ -463,8 +468,6 @@ def initialize_volume_entry(
     entry.index = index
     entry.name = name
     entry.color = color
-    if hasattr(entry, "material_domain"):
-        entry.material_domain = "VOLUME"
     entry.material_owned = True
     entry.material = create_default_volume_material(mesh, entry, volume_color=color, density=density)
 

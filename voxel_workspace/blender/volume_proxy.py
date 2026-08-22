@@ -343,10 +343,10 @@ def reconcile_volume_proxies(
     # 2. Ensure and rebuild geometry for each used VOLUME index
     from .material_domains import find_entry
     for pal_idx in vol_indices:
-        # Find entry in typed palette or legacy palette
+        # Typed Volume Palette is authoritative.
         entry_item = find_entry(mesh, "VOLUME", pal_idx)
-        if entry_item is None and hasattr(props, "palette"):
-            entry_item = next((e for e in props.palette if e.index == pal_idx), None)
+        if entry_item is None:
+            continue
         proxy_obj = ensure_proxy(parent_obj, mesh, entry_item)
         rebuild_proxy_geometry(
             proxy_obj,

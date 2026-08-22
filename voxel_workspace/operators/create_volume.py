@@ -11,7 +11,7 @@ except ImportError:
     Operator = object
     IntProperty = FloatProperty = None
 
-from ..core.grid import VoxelGrid
+from ..core.tagged_grid import TaggedVoxelGrid
 from ..blender.properties import (
     init_voxel_mesh_properties,
     init_voxel_object_properties,
@@ -148,7 +148,7 @@ class VOXEL_OT_create_volume(Operator):
         surface_obj[VOXEL_ROOT_INSTANCE_UUID_FLAG] = root_instance_uuid
 
         # 4. Create empty grid and initialize storage
-        grid = VoxelGrid(extent_min=extent_min, extent_max_exclusive=extent_max, brick_size=32)
+        grid = TaggedVoxelGrid(extent_min=extent_min, extent_max_exclusive=extent_max, brick_size=32)
         init_volume_storage(mesh, grid=grid, push_undo=False)
 
         # 5. Empty native-domain render mesh.

@@ -51,11 +51,20 @@ def _palette_color_updated(self, _context):
     # Find owning mesh UUID from id_data if possible.
     mesh = getattr(self, "id_data", None)
     uuid_str = None
+    palette_type = "SURFACE"
     if mesh is not None and hasattr(mesh, "voxel_workspace"):
         uuid_str = getattr(mesh.voxel_workspace, "uuid", None)
+        self_pointer = self.as_pointer() if hasattr(self, "as_pointer") else None
+        if self_pointer is not None:
+            for candidate in mesh.voxel_workspace.volume_palette:
+                if candidate.as_pointer() == self_pointer:
+                    palette_type = "VOLUME"
+                    break
     try:
-        from .gpu_preview import drop_palette_lut
-        drop_palette_lut(uuid_str)
+        from .gpu_preview import drop_palette_lut, recolor_preview_batches
+        drop_palette_lut(uuid_str, palette_type)
+        from .runtime import get_volume
+        recolor_preview_batches(get_volume(uuid_str), palette_type)
     except Exception:
         pass
     tag_redraw_all_viewports()
@@ -304,8 +313,10 @@ class VoxelSceneProperties(PropertyGroup):
             name="Active Tool",
             items=[
                 ("NONE", "None", "No voxel brush is active"),
-                ("PLACE", "Place", "Place brush is active"),
+                ("ADD_SURFACE", "Add Surface", "Surface brush is active"),
+                ("ADD_VOLUME", "Add Volume", "Volume brush is active"),
                 ("ERASE", "Erase", "Erase brush is active"),
+                ("PLACE", "Legacy Place", "Compatibility alias for Add Surface"),
             ],
             default="NONE",
         )
@@ -395,21 +406,6 @@ def ensure_palette(mesh: Any) -> None:
         item1 = props.volume_palette.add()
         initialize_volume_entry(mesh, item1, index=1, name="Mist", color=(0.8, 0.85, 0.9, 1.0))
 
-    # Keep legacy palette in sync for migration reads if present
-    if hasattr(props, "palette") and len(props.palette) == 0:
-        from .material_domains import initialize_palette_entry
-        item = props.palette.add()
-        item.index = 0
-        item.name = "Empty"
-        item.color = DEFAULT_PALETTE[0]
-        item.material_domain = "SURFACE"
-        item.material_owned = True
-        for idx in range(1, len(DEFAULT_PALETTE)):
-            item = props.palette.add()
-            name = default_names.get(idx, f"Color {idx}")
-            color = DEFAULT_PALETTE[idx]
-            initialize_palette_entry(mesh, item, index=idx, name=name, color=color, domain="SURFACE")
-
 
 def init_voxel_mesh_properties(
     mesh: "bpy.types.Mesh",
@@ -431,10 +427,10 @@ def init_voxel_mesh_properties(
     props.brick_size = brick_size
     props.voxel_size = voxel_size
     props.schema_version = schema_version
-    props.palette_schema_version = 2
+    props.palette_schema_version = 3
     props.palette_index_bits = 8
     props.palette_color_space = "sRGB"
-    if len(props.palette) == 0:
+    if len(props.surface_palette) == 0 or len(props.volume_palette) == 0:
         ensure_palette(mesh)
     return uuid_str
 

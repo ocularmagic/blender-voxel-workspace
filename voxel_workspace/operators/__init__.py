@@ -4,6 +4,8 @@ from .create_volume import (
     VOXEL_OT_create_volume,
 )
 from .edit_session import (
+    VOXEL_OT_start_surface,
+    VOXEL_OT_start_volume,
     VOXEL_OT_start_place,
     VOXEL_OT_start_erase,
     VOXEL_OT_stop_editing,
@@ -18,7 +20,6 @@ from .palette import (
     VOXEL_OT_edit_palette_material,
     VOXEL_OT_sync_display_to_material_color,
     VOXEL_OT_sync_material_to_display_color,
-    VOXEL_OT_set_palette_material_domain,
     VOXEL_OT_make_material_single_user,
     VOXEL_OT_add_palette_color,
     VOXEL_OT_duplicate_palette_color,
@@ -46,6 +47,8 @@ OPERATOR_CLASSES: List[Type] = [
 
 __all__ = [
     "VOXEL_OT_create_volume",
+    "VOXEL_OT_start_surface",
+    "VOXEL_OT_start_volume",
     "VOXEL_OT_start_place",
     "VOXEL_OT_start_erase",
     "VOXEL_OT_stop_editing",
@@ -54,7 +57,6 @@ __all__ = [
     "VOXEL_OT_edit_palette_material",
     "VOXEL_OT_sync_display_to_material_color",
     "VOXEL_OT_sync_material_to_display_color",
-    "VOXEL_OT_set_palette_material_domain",
     "VOXEL_OT_make_material_single_user",
     "VOXEL_OT_add_palette_color",
     "VOXEL_OT_duplicate_palette_color",

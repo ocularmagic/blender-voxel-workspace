@@ -7,6 +7,26 @@ from .grid import VoxelGrid
 from .tagged_grid import TaggedVoxelGrid, VoxelCell, VoxelDomain, CELL_EMPTY
 
 
+def apply_brush_value(
+    grid: TaggedVoxelGrid,
+    coord: VoxelCoord,
+    mode: str,
+    palette_index: int,
+) -> VoxelCell:
+    """Apply one explicit tagged brush mode and return the canonical new cell."""
+    normalized = str(mode).upper()
+    if normalized == "ADD_SURFACE":
+        cell = VoxelCell(VoxelDomain.SURFACE, palette_index)
+    elif normalized == "ADD_VOLUME":
+        cell = VoxelCell(VoxelDomain.VOLUME, palette_index)
+    elif normalized == "ERASE":
+        cell = CELL_EMPTY
+    else:
+        raise ValueError(f"Unknown brush mode: {mode}")
+    grid.set_cell(coord, cell.domain, cell.index)
+    return cell
+
+
 @dataclass
 class CellDelta:
     coord: VoxelCoord

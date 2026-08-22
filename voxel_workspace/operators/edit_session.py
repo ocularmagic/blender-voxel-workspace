@@ -45,11 +45,29 @@ def is_valid_voxel_object(obj_or_context: Any) -> bool:
     )
 
 
-class VOXEL_OT_start_place(Operator):
-    """Start placing voxels on the active voxel volume."""
-    bl_idname = "voxel.start_place"
-    bl_label = "Start Place"
-    bl_description = "Start interactive modal voxel place tool"
+def _start_brush(context: Any, operator: Any, mode: str) -> set:
+    if bpy is None or context is None:
+        return {'CANCELLED'}
+    v_ctx = resolve_volume_context(context)
+    if v_ctx is None or not v_ctx.mesh_uuid:
+        operator.report({'ERROR'}, "Active object is not a valid voxel field")
+        return {'CANCELLED'}
+    _request_brush_stop()
+    stop_editing(context)
+    start_editing(v_ctx.mesh_uuid, context)
+    context.scene.voxel_workspace.active_tool = mode
+    try:
+        bpy.ops.voxel.brush('INVOKE_DEFAULT', mode=mode)
+    except Exception:
+        pass
+    return {'FINISHED'}
+
+
+class VOXEL_OT_start_surface(Operator):
+    """Start adding Surface voxels."""
+    bl_idname = "voxel.start_surface"
+    bl_label = "Add Surface"
+    bl_description = "Add voxels using the active Surface Palette entry"
     bl_options = {'REGISTER'}
 
     @classmethod
@@ -59,28 +77,28 @@ class VOXEL_OT_start_place(Operator):
         return is_valid_voxel_object(context)
 
     def execute(self, context: Any) -> set:
-        if bpy is None or context is None:
-            return {'CANCELLED'}
+        return _start_brush(context, self, 'ADD_SURFACE')
 
-        v_ctx = resolve_volume_context(context)
-        if v_ctx is None or not v_ctx.mesh_uuid:
-            self.report({'ERROR'}, "Active object is not a valid voxel volume")
-            return {'CANCELLED'}
 
-        vol_uuid = v_ctx.mesh_uuid
-        _request_brush_stop()
-        stop_editing(context)
-        start_editing(vol_uuid, context)
-        context.scene.voxel_workspace.active_tool = 'PLACE'
+class VOXEL_OT_start_volume(Operator):
+    """Start adding Volume voxels."""
+    bl_idname = "voxel.start_volume"
+    bl_label = "Add Volume"
+    bl_description = "Add voxels using the active Volume Palette entry"
+    bl_options = {'REGISTER'}
 
-        # Invoke modal brush with mode='PLACE'
-        if hasattr(bpy.ops, "voxel") and hasattr(bpy.ops.voxel, "brush"):
-            try:
-                bpy.ops.voxel.brush('INVOKE_DEFAULT', mode='PLACE')
-            except Exception:
-                pass
+    @classmethod
+    def poll(cls, context: Any) -> bool:
+        return context is not None and is_valid_voxel_object(context)
 
-        return {'FINISHED'}
+    def execute(self, context: Any) -> set:
+        return _start_brush(context, self, 'ADD_VOLUME')
+
+
+class VOXEL_OT_start_place(VOXEL_OT_start_surface):
+    """Compatibility alias for the former Place tool."""
+    bl_idname = "voxel.start_place"
+    bl_label = "Add Surface"
 
 
 class VOXEL_OT_start_erase(Operator):
@@ -105,20 +123,7 @@ class VOXEL_OT_start_erase(Operator):
             self.report({'ERROR'}, "Active object is not a valid voxel volume")
             return {'CANCELLED'}
 
-        vol_uuid = v_ctx.mesh_uuid
-        _request_brush_stop()
-        stop_editing(context)
-        start_editing(vol_uuid, context)
-        context.scene.voxel_workspace.active_tool = 'ERASE'
-
-        # Invoke modal brush with mode='ERASE'
-        if hasattr(bpy.ops, "voxel") and hasattr(bpy.ops.voxel, "brush"):
-            try:
-                bpy.ops.voxel.brush('INVOKE_DEFAULT', mode='ERASE')
-            except Exception:
-                pass
-
-        return {'FINISHED'}
+        return _start_brush(context, self, 'ERASE')
 
 
 class VOXEL_OT_stop_editing(Operator):
@@ -137,6 +142,8 @@ class VOXEL_OT_stop_editing(Operator):
 
 
 EDIT_SESSION_OPERATOR_CLASSES = [
+    VOXEL_OT_start_surface,
+    VOXEL_OT_start_volume,
     VOXEL_OT_start_place,
     VOXEL_OT_start_erase,
     VOXEL_OT_stop_editing,

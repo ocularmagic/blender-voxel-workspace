@@ -24,10 +24,15 @@ class VoxelVolumeEntry:
     cpu_buffers: Dict[BrickCoord, MeshBuffers] = field(default_factory=dict)
     gpu_batches: Dict[BrickCoord, Any] = field(default_factory=dict)
     gpu_edge_batches: Dict[BrickCoord, Any] = field(default_factory=dict)
+    volume_preview_buffers: Dict[BrickCoord, MeshBuffers] = field(default_factory=dict)
+    volume_gpu_batches: Dict[BrickCoord, Any] = field(default_factory=dict)
+    volume_gpu_edge_batches: Dict[BrickCoord, Any] = field(default_factory=dict)
     volume_proxy_buffers: Dict[int, Dict[BrickCoord, MeshBuffers]] = field(default_factory=dict)
     dirty_bricks: Set[BrickCoord] = field(default_factory=set)
     voxel_size: float = 1.0
     palette_lut: Optional[np.ndarray] = None
+    surface_palette_lut: Optional[np.ndarray] = None
+    volume_palette_lut: Optional[np.ndarray] = None
 
 
 _REGISTRY: Dict[str, VoxelVolumeEntry] = {}
@@ -182,11 +187,6 @@ def deduplicate_mesh_uuids(scene=None, depsgraph=None) -> List[Tuple[Any, str, s
                     for entry in props.volume_palette:
                         if entry.index > 0:
                             copy_entry_material_for_mesh(entry, entry, new_uuid)
-                if hasattr(props, "palette"):
-                    for entry in props.palette:
-                        if entry.index > 0:
-                            copy_entry_material_for_mesh(entry, entry, new_uuid)
-
                 # Rebuild the dense native slot list from the forked entry
                 # pointers. Never inject the retired atlas material into slot 0.
                 from .material_domains import reconcile_surface_slots, cleanup_legacy_atlas_datablocks
@@ -251,15 +251,20 @@ def reconcile_all_palette_caches(pack_images: bool = False) -> None:
     from .properties import ensure_palette, migrate_native_material_domains
     from .material_domains import cleanup_legacy_atlas_datablocks
     from .volume_proxy import cleanup_stale_proxies
+    from .object_graph import cleanup_stale_voxel_children
     from .mesh_sync import sync_volume_mesh
     from .gpu_preview import drop_palette_lut
 
+    cleanup_stale_voxel_children()
     cleanup_stale_proxies()
 
     for mesh in bpy.data.meshes:
         if hasattr(mesh, "voxel_workspace") and mesh.voxel_workspace.is_voxel_mesh:
             props = mesh.voxel_workspace
-            if (hasattr(props, "surface_palette") and len(props.surface_palette) == 0) or len(props.palette) == 0:
+            if int(props.schema_version) < 3:
+                from .migration import migrate_mesh_to_schema3
+                migrate_mesh_to_schema3(mesh)
+            if len(props.surface_palette) == 0 or len(props.volume_palette) == 0:
                 ensure_palette(mesh)
             migrate_native_material_domains(mesh)
             

@@ -14,7 +14,8 @@ except ImportError:
 
 from ..constants import VoxelCoord
 from ..core.coords import split_coord
-from ..core.commands import VoxelStroke
+from ..core.commands import VoxelStroke, apply_brush_value
+from ..core.tagged_grid import TaggedVoxelGrid, VoxelCell, VoxelDomain, CELL_EMPTY
 from ..core.line import (
     line_3d,
     compute_brush_target,
@@ -109,6 +110,19 @@ def snapshot_grid(grid):
     return snapshot
 
 
+def brush_cell_for_scene(scene: Any, mode: str) -> VoxelCell:
+    """Resolve the canonical tagged value for an explicit brush mode."""
+    normalized = str(mode).upper()
+    props = scene.voxel_workspace
+    if normalized in {'ADD_SURFACE', 'PLACE'}:
+        return VoxelCell(VoxelDomain.SURFACE, int(props.active_surface_palette_index))
+    if normalized == 'ADD_VOLUME':
+        return VoxelCell(VoxelDomain.VOLUME, int(props.active_volume_palette_index))
+    if normalized == 'ERASE':
+        return CELL_EMPTY
+    raise ValueError(f"Unknown brush mode: {mode}")
+
+
 from ..blender.object_graph import (
     resolve_volume_context,
     resolve_authoritative_mesh,
@@ -135,12 +149,14 @@ class BrushSession:
 
     def __init__(
         self,
-        mode: str = "PLACE",
+        mode: str = "ADD_SURFACE",
         volume_uuid: Optional[str] = None,
+        root_instance_uuid: Optional[str] = None,
         modal_token: Optional[int] = None,
     ) -> None:
         self.mode: str = mode
         self.volume_uuid: Optional[str] = volume_uuid or get_active_volume_uuid()
+        self.root_instance_uuid: Optional[str] = root_instance_uuid
         self.is_dragging: bool = False
         self.stroke: Optional[VoxelStroke] = None
         self.last_target: Optional[VoxelCoord] = None
@@ -230,7 +246,7 @@ class BrushSession:
             origin_grid, dir_grid = world_ray_to_grid_ray(
                 origin_world, dir_world, transform_obj.matrix_world, voxel_size=entry.voxel_size
             )
-            picking_grid = self.pick_grid if self.mode == 'PLACE' and self.pick_grid is not None else entry.grid
+            picking_grid = self.pick_grid if self.mode in {'ADD_SURFACE', 'ADD_VOLUME', 'PLACE'} and self.pick_grid is not None else entry.grid
             return compute_brush_target(picking_grid, origin_grid, dir_grid, mode=self.mode)
         except Exception:
             return None, None, None
@@ -278,6 +294,10 @@ class BrushSession:
         entry = get_or_load(v_ctx.mesh)
         if entry is None:
             self.cleanup()
+            stop_editing(context)
+            return {'CANCELLED'}
+        if self.root_instance_uuid and v_ctx.root_instance_uuid != self.root_instance_uuid:
+            self.cleanup(entry)
             stop_editing(context)
             return {'CANCELLED'}
 
@@ -354,9 +374,16 @@ class BrushSession:
                             if hit is not None:
                                 picked_index = entry.grid.get(hit.cell)
                                 if picked_index > 0:
-                                    context.scene.voxel_workspace.active_palette_index = picked_index
-                                    if 1 <= picked_index <= 8:
-                                        context.scene.voxel_workspace.active_palette_choice = str(picked_index)
+                                    cell = entry.grid.get_cell(hit.cell) if isinstance(entry.grid, TaggedVoxelGrid) else None
+                                    if cell is not None and cell.domain == VoxelDomain.VOLUME:
+                                        context.scene.voxel_workspace.active_volume_palette_index = picked_index
+                                        context.scene.voxel_workspace.active_palette_tab = 'VOLUME'
+                                    else:
+                                        context.scene.voxel_workspace.active_surface_palette_index = picked_index
+                                        context.scene.voxel_workspace.active_palette_index = picked_index
+                                        context.scene.voxel_workspace.active_palette_tab = 'SURFACE'
+                                        if 1 <= picked_index <= 8:
+                                            context.scene.voxel_workspace.active_palette_choice = str(picked_index)
                                     tag_redraw_all_viewports()
                                     return {'RUNNING_MODAL'}
                     except Exception:
@@ -381,11 +408,14 @@ class BrushSession:
                 return {'PASS_THROUGH'}
             self.is_dragging = True
             self.stroke = VoxelStroke(brick_size=entry.grid.brick_size)
-            self.pick_grid = snapshot_grid(entry.grid) if self.mode == 'PLACE' else None
-            val = getattr(context.scene.voxel_workspace, "active_palette_index", 1) if self.mode == 'PLACE' else 0
+            self.pick_grid = snapshot_grid(entry.grid) if self.mode in {'ADD_SURFACE', 'ADD_VOLUME', 'PLACE'} else None
+            cell = brush_cell_for_scene(context.scene, self.mode)
             if target_cell is not None:
-                self.stroke.record(entry.grid, target_cell, val)
-                entry.grid.set(target_cell, val)
+                self.stroke.record(entry.grid, target_cell, cell)
+                if isinstance(entry.grid, TaggedVoxelGrid):
+                    apply_brush_value(entry.grid, target_cell, 'ADD_SURFACE' if self.mode == 'PLACE' else self.mode, cell.index)
+                else:
+                    entry.grid.set(target_cell, cell.index)
                 entry.dirty_bricks.add(split_coord(target_cell, entry.grid.brick_size)[0])
                 update_volume_gpu_preview(entry, dirty_only=True)
                 self.last_target = target_cell
@@ -397,20 +427,26 @@ class BrushSession:
         # 5. Handle Mouse Move while Dragging (Stroke drag & fill missed cells)
         if event.type == 'MOUSEMOVE' and self.is_dragging:
             if target_cell is not None:
-                val = getattr(context.scene.voxel_workspace, "active_palette_index", 1) if self.mode == 'PLACE' else 0
+                cell = brush_cell_for_scene(context.scene, self.mode)
                 if self.last_target is not None and self.last_target != target_cell:
                     cells = line_3d(self.last_target, target_cell)
                     for c in cells:
                         if entry.grid.in_extent(c):
-                            self.stroke.record(entry.grid, c, val)
-                            entry.grid.set(c, val)
+                            self.stroke.record(entry.grid, c, cell)
+                            if isinstance(entry.grid, TaggedVoxelGrid):
+                                apply_brush_value(entry.grid, c, 'ADD_SURFACE' if self.mode == 'PLACE' else self.mode, cell.index)
+                            else:
+                                entry.grid.set(c, cell.index)
                             entry.dirty_bricks.add(split_coord(c, entry.grid.brick_size)[0])
                     update_volume_gpu_preview(entry, dirty_only=True)
                     self.last_target = target_cell
                     tag_redraw_all_viewports()
                 elif self.last_target is None:
-                    self.stroke.record(entry.grid, target_cell, val)
-                    entry.grid.set(target_cell, val)
+                    self.stroke.record(entry.grid, target_cell, cell)
+                    if isinstance(entry.grid, TaggedVoxelGrid):
+                        apply_brush_value(entry.grid, target_cell, 'ADD_SURFACE' if self.mode == 'PLACE' else self.mode, cell.index)
+                    else:
+                        entry.grid.set(target_cell, cell.index)
                     entry.dirty_bricks.add(split_coord(target_cell, entry.grid.brick_size)[0])
                     update_volume_gpu_preview(entry, dirty_only=True)
                     self.last_target = target_cell
@@ -449,7 +485,12 @@ class BrushSession:
         # 7. Handle Mouse Move while Idle (Hover highlight)
         if event.type == 'MOUSEMOVE' and not self.is_dragging:
             if hover_cell is not None and hover_normal is not None:
-                color = (1.0, 0.9, 0.2, 0.6) if self.mode == 'PLACE' else (1.0, 0.2, 0.2, 0.6)
+                color = {
+                    'ADD_SURFACE': (1.0, 0.9, 0.2, 0.6),
+                    'PLACE': (1.0, 0.9, 0.2, 0.6),
+                    'ADD_VOLUME': (0.25, 0.65, 1.0, 0.45),
+                    'ERASE': (1.0, 0.2, 0.2, 0.6),
+                }.get(self.mode, (1.0, 0.2, 0.2, 0.6))
                 set_hover_state(hover_cell, hover_normal, color=color)
             else:
                 clear_hover_state()
@@ -472,19 +513,20 @@ class VOXEL_OT_brush(Operator):
             name="Mode",
             description="Brush tool mode",
             items=[
-                ('PLACE', 'Place', 'Place voxels'),
+                ('ADD_SURFACE', 'Add Surface', 'Add Surface voxels'),
+                ('ADD_VOLUME', 'Add Volume', 'Add Volume voxels'),
                 ('ERASE', 'Erase', 'Erase voxels'),
             ],
-            default='PLACE',
+            default='ADD_SURFACE',
         )
 
     def invoke(self, context: Any, event: Any) -> set:
         if bpy is None or context is None:
             return {'CANCELLED'}
 
+        v_ctx = resolve_volume_context(context)
         active_uuid = get_active_volume_uuid()
         if not active_uuid:
-            v_ctx = resolve_volume_context(context)
             if v_ctx is not None and v_ctx.mesh_uuid:
                 from ..blender.gpu_preview import start_editing
                 active_uuid = v_ctx.mesh_uuid
@@ -497,6 +539,7 @@ class VOXEL_OT_brush(Operator):
         self.session = BrushSession(
             mode=self.mode,
             volume_uuid=active_uuid,
+            root_instance_uuid=v_ctx.root_instance_uuid if v_ctx is not None else None,
             modal_token=modal_token,
         )
         context.scene.voxel_workspace.active_tool = self.mode

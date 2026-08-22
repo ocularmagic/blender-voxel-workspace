@@ -227,9 +227,6 @@ def resolve_volume_context(context_or_obj: Any) -> Optional[VoxelResolvedContext
     root_uuid = ""
     if root is not None:
         root_uuid = root.get(VOXEL_INSTANCE_UUID_FLAG, "") if hasattr(root, "get") else ""
-        if not root_uuid:
-            root_uuid = str(uuid.uuid4())
-            root[VOXEL_INSTANCE_UUID_FLAG] = root_uuid
     else:
         root_uuid = surface_obj.get(VOXEL_ROOT_INSTANCE_UUID_FLAG, mesh_uuid) if hasattr(surface_obj, "get") else mesh_uuid
 
@@ -377,8 +374,13 @@ def cleanup_stale_voxel_children() -> List[str]:
     removed = []
     for obj in list(bpy.data.objects):
         if is_surface_render_object(obj):
-            if obj.parent is not None and not is_voxel_root(obj.parent) and not obj.parent.get(PROXY_OBJECT_FLAG, False):
-                pass
+            parent = obj.parent
+            if parent is None or not is_voxel_root(parent):
+                root = ensure_root_for_surface(obj)
+                if root is not None:
+                    # Repaired authoritative fields are retained rather than
+                    # treating Blender parent deletion as cascading data loss.
+                    continue
         elif is_volume_render_object(obj):
             # Check if parent exists and is valid
             if obj.parent is None:

@@ -33,39 +33,54 @@ def _build_default_palette_rgba_lut() -> np.ndarray:
     return _DEFAULT_PALETTE_RGBA_LUT
 
 
-def drop_palette_lut(target: Any = None) -> None:
-    """Drop the cached palette RGBA LUT and clear GPU batches so they regenerate with new colors."""
+def build_typed_palette_lut(entries: Any, volume_alpha: Optional[float] = None) -> np.ndarray:
+    """Build one independent 256-row display LUT from a typed palette collection."""
+    lut = np.zeros((256, 4), dtype=np.float32)
+    for palette_entry in entries:
+        idx = int(palette_entry.index)
+        if not (1 <= idx <= 255):
+            continue
+        color = np.asarray(tuple(palette_entry.color), dtype=np.float32).copy()
+        if volume_alpha is not None:
+            color[3] = float(volume_alpha)
+        lut[idx] = color
+    return lut
+
+
+def drop_palette_lut(target: Any = None, palette_type: Optional[str] = None) -> None:
+    """Drop one or both typed display LUTs and color-baked GPU batches."""
     global _DEFAULT_PALETTE_RGBA_LUT
     _DEFAULT_PALETTE_RGBA_LUT = None
+    domain = str(palette_type).upper() if palette_type else None
 
     if target is None:
         from .runtime import all_volumes
-        for entry in all_volumes().values():
+        entries = list(all_volumes().values())
+    else:
+        entry = None
+        if isinstance(target, str):
+            from .runtime import get_volume
+            entry = get_volume(target)
+        elif hasattr(target, "palette_lut"):
+            entry = target
+        entries = [entry] if entry is not None else []
+
+    for entry in entries:
+        if domain in {None, "SURFACE"}:
+            entry.surface_palette_lut = None
             entry.palette_lut = None
-            if hasattr(entry, "gpu_batches"):
-                entry.gpu_batches.clear()
-        return
-
-    entry = None
-    if isinstance(target, str):
-        from .runtime import get_volume
-        entry = get_volume(target)
-    elif hasattr(target, "palette_lut"):
-        entry = target
-
-    if entry is not None:
-        entry.palette_lut = None
-        if hasattr(entry, "gpu_batches"):
             entry.gpu_batches.clear()
+        if domain in {None, "VOLUME"}:
+            entry.volume_palette_lut = None
+            if hasattr(entry, "volume_gpu_batches"):
+                entry.volume_gpu_batches.clear()
 
 
-def get_palette_rgba_lut(target: Any = None) -> np.ndarray:
-    """Return the (256, 4) float32 RGBA palette lookup array for a volume entry or target.
-    
-    Lazily built from the Mesh palette collection and cached on VoxelVolumeEntry.palette_lut.
-    Always emits 256 rows; unallocated rows are transparent black [0, 0, 0, 0]
-    (with row 0 reserved empty).
-    """
+def get_palette_rgba_lut(target: Any = None, palette_type: str = "SURFACE") -> np.ndarray:
+    """Return an independent 256-row display LUT for Surface or Volume Palette."""
+    domain = str(palette_type).upper()
+    if domain not in {"SURFACE", "VOLUME"}:
+        raise ValueError(f"Unknown palette type: {palette_type}")
     entry = None
     mesh = None
 
@@ -80,40 +95,36 @@ def get_palette_rgba_lut(target: Any = None) -> np.ndarray:
         elif bpy is not None and hasattr(target, "data") and hasattr(target.data, "voxel_workspace"):
             mesh = target.data
 
-    if entry is not None and entry.palette_lut is not None:
-        return entry.palette_lut
+    cache_name = "volume_palette_lut" if domain == "VOLUME" else "surface_palette_lut"
+    if entry is not None and getattr(entry, cache_name, None) is not None:
+        return getattr(entry, cache_name)
 
-    # Resolve mesh from entry if not already found
-    if mesh is None and entry is not None and bpy is not None and hasattr(bpy, "data") and hasattr(bpy.data, "meshes"):
-        for m in bpy.data.meshes:
-            if hasattr(m, "voxel_workspace") and m.voxel_workspace.uuid == entry.uuid:
-                mesh = m
+    if mesh is None and entry is not None and bpy is not None:
+        for candidate in bpy.data.meshes:
+            if hasattr(candidate, "voxel_workspace") and candidate.voxel_workspace.uuid == entry.uuid:
+                mesh = candidate
                 break
 
     if mesh is not None and hasattr(mesh, "voxel_workspace"):
+        from .properties import ensure_palette
+        ensure_palette(mesh)
         props = mesh.voxel_workspace
-        lut = np.zeros((256, 4), dtype=np.float32)
-        if len(props.palette) == 0:
-            from .properties import ensure_palette
-            ensure_palette(mesh)
-        for p_entry in props.palette:
-            idx = int(p_entry.index)
-            if 0 <= idx < 256:
-                col = list(p_entry.color)
-                # If VOLUME domain, use editing preview alpha (0.35)
-                if getattr(p_entry, "material_domain", "SURFACE") == "VOLUME":
-                    col[3] = 0.35
-                lut[idx] = col
+        entries = props.volume_palette if domain == "VOLUME" else props.surface_palette
+        lut = build_typed_palette_lut(entries, volume_alpha=0.35 if domain == "VOLUME" else None)
         if entry is not None:
-            entry.palette_lut = lut
+            setattr(entry, cache_name, lut)
+            if domain == "SURFACE":
+                entry.palette_lut = lut
         return lut
 
+    default_lut = _build_default_palette_rgba_lut().copy()
+    if domain == "VOLUME":
+        default_lut[:, 3] = np.where(default_lut[:, 3] > 0.0, 0.35, 0.0)
     if entry is not None:
-        default_lut = _build_default_palette_rgba_lut().copy()
-        entry.palette_lut = default_lut
-        return default_lut
-
-    return _build_default_palette_rgba_lut()
+        setattr(entry, cache_name, default_lut)
+        if domain == "SURFACE":
+            entry.palette_lut = default_lut
+    return default_lut
 
 
 def palette_indices_to_rgba(palette_indices: np.ndarray, lut: Optional[np.ndarray] = None) -> np.ndarray:
@@ -122,6 +133,25 @@ def palette_indices_to_rgba(palette_indices: np.ndarray, lut: Optional[np.ndarra
         lut = get_palette_rgba_lut()
     clipped = np.clip(palette_indices, 0, 255)
     return lut[clipped]
+
+
+def recolor_preview_batches(entry: Any, palette_type: str) -> None:
+    """Rebuild color-baked batches from cached CPU buffers without remeshing."""
+    if entry is None:
+        return
+    domain = str(palette_type).upper()
+    if domain == "VOLUME":
+        buffers = entry.volume_preview_buffers
+        batches = entry.volume_gpu_batches
+    else:
+        buffers = entry.cpu_buffers
+        batches = entry.gpu_batches
+    lut = get_palette_rgba_lut(entry, domain)
+    batches.clear()
+    for coord, mesh_buffers in buffers.items():
+        batch = build_brick_gpu_batch(mesh_buffers, lut=lut)
+        if batch is not None:
+            batches[coord] = batch
 
 
 # --- Geometric Data Generators ---
@@ -424,63 +454,77 @@ def update_volume_gpu_preview(
     dirty_only: bool = True,
     dirty_bricks: Optional[Set[BrickCoord]] = None,
 ) -> None:
-    """Rebuild visible-face buffers and GPU batches for dirty bricks of the given volume."""
+    """Rebuild independent Surface and Volume editing-preview batches."""
     if entry is None or not hasattr(entry, "grid"):
         return
 
-    grid = entry.grid
-    cpu_buffers = entry.cpu_buffers
-    gpu_batches = entry.gpu_batches
-    gpu_edge_batches = entry.gpu_edge_batches
+    from ..core.tagged_grid import TaggedVoxelGrid, VoxelDomain
 
-    if dirty_only and (dirty_bricks is not None or len(grid.dirty_bricks) > 0 or len(entry.dirty_bricks) > 0) and len(gpu_batches) > 0:
-        base_dirty: Set[BrickCoord] = set(dirty_bricks or set()) | set(grid.dirty_bricks) | set(entry.dirty_bricks)
+    grid = entry.grid
+    surface_buffers = entry.cpu_buffers
+    surface_batches = entry.gpu_batches
+    surface_edges = entry.gpu_edge_batches
+    volume_buffers = entry.volume_preview_buffers
+    volume_batches = entry.volume_gpu_batches
+    volume_edges = entry.volume_gpu_edge_batches
+
+    all_cached = set(surface_batches) | set(surface_edges) | set(volume_batches) | set(volume_edges)
+    if dirty_only and (dirty_bricks is not None or grid.dirty_bricks or entry.dirty_bricks) and all_cached:
+        base_dirty = set(dirty_bricks or set()) | set(grid.dirty_bricks) | set(entry.dirty_bricks)
         remesh_targets: Set[BrickCoord] = set()
         for bx, by, bz in base_dirty:
-            remesh_targets.add((bx, by, bz))
             for dx in (-1, 0, 1):
                 for dy in (-1, 0, 1):
                     for dz in (-1, 0, 1):
-                        n_coord = (bx + dx, by + dy, bz + dz)
-                        if n_coord in grid.bricks or n_coord in gpu_batches or n_coord in gpu_edge_batches:
-                            remesh_targets.add(n_coord)
+                        coord = (bx + dx, by + dy, bz + dz)
+                        if coord in grid.bricks or coord in all_cached or coord == (bx, by, bz):
+                            remesh_targets.add(coord)
     else:
-        remesh_targets = set(grid.bricks.keys()) | set(gpu_batches.keys()) | set(gpu_edge_batches.keys())
+        remesh_targets = set(grid.bricks) | all_cached
 
     s = grid.brick_size
     v_size = entry.voxel_size
-    lut = get_palette_rgba_lut(entry)
+    surface_lut = get_palette_rgba_lut(entry, "SURFACE")
+    volume_lut = get_palette_rgba_lut(entry, "VOLUME")
+
+    def rebuild_domain(coord, domain, buffers, batches, edges, lut):
+        brick = grid.bricks.get(coord)
+        if brick is None:
+            buffers.pop(coord, None); batches.pop(coord, None); edges.pop(coord, None)
+            return
+        if isinstance(grid, TaggedVoxelGrid):
+            core = np.where(brick.domains == int(domain), brick.indices, 0).astype(np.uint8)
+            apron = grid.read_index_apron(coord, domain_filter=domain)
+        else:
+            if domain == VoxelDomain.VOLUME:
+                core = np.zeros((s, s, s), dtype=np.uint8)
+                apron = np.zeros((s + 2, s + 2, s + 2), dtype=np.uint8)
+            else:
+                core = brick
+                apron = grid.read_apron(coord)
+        if not np.any(core):
+            buffers.pop(coord, None); batches.pop(coord, None); edges.pop(coord, None)
+            return
+        origin = tuple(float(coord[axis] * s) * v_size for axis in range(3))
+        buf = mesh_visible_faces(apron, origin=origin, voxel_size=v_size, brick=core)
+        if buf.quad_count == 0:
+            buffers.pop(coord, None); batches.pop(coord, None); edges.pop(coord, None)
+            return
+        buffers[coord] = buf
+        batch = build_brick_gpu_batch(buf, lut=lut)
+        if batch is not None:
+            batches[coord] = batch
+        else:
+            batches.pop(coord, None)
+        edge_batch = build_voxel_edge_gpu_batch(buf, surface_offset=v_size * 0.001)
+        if edge_batch is not None:
+            edges[coord] = edge_batch
+        else:
+            edges.pop(coord, None)
 
     for coord in remesh_targets:
-        brick = grid.bricks.get(coord)
-        if brick is not None and np.any(brick):
-            apron = grid.read_apron(coord)
-            origin = (
-                float(coord[0] * s) * v_size,
-                float(coord[1] * s) * v_size,
-                float(coord[2] * s) * v_size,
-            )
-            buf = mesh_visible_faces(apron, origin=origin, voxel_size=v_size, brick=brick)
-            if buf.quad_count > 0:
-                cpu_buffers[coord] = buf
-                batch = build_brick_gpu_batch(buf, lut=lut)
-                if batch is not None:
-                    gpu_batches[coord] = batch
-                else:
-                    gpu_batches.pop(coord, None)
-                edge_batch = build_voxel_edge_gpu_batch(buf, surface_offset=v_size * 0.001)
-                if edge_batch is not None:
-                    gpu_edge_batches[coord] = edge_batch
-                else:
-                    gpu_edge_batches.pop(coord, None)
-            else:
-                cpu_buffers.pop(coord, None)
-                gpu_batches.pop(coord, None)
-                gpu_edge_batches.pop(coord, None)
-        else:
-            cpu_buffers.pop(coord, None)
-            gpu_batches.pop(coord, None)
-            gpu_edge_batches.pop(coord, None)
+        rebuild_domain(coord, VoxelDomain.SURFACE, surface_buffers, surface_batches, surface_edges, surface_lut)
+        rebuild_domain(coord, VoxelDomain.VOLUME, volume_buffers, volume_batches, volume_edges, volume_lut)
 
     entry.dirty_bricks.clear()
     grid.dirty_bricks.clear()
@@ -496,6 +540,12 @@ def clear_volume_gpu_preview(entry: Any) -> None:
         entry.gpu_edge_batches.clear()
     if hasattr(entry, "cpu_buffers"):
         entry.cpu_buffers.clear()
+    if hasattr(entry, "volume_preview_buffers"):
+        entry.volume_preview_buffers.clear()
+    if hasattr(entry, "volume_gpu_batches"):
+        entry.volume_gpu_batches.clear()
+    if hasattr(entry, "volume_gpu_edge_batches"):
+        entry.volume_gpu_edge_batches.clear()
 
 
 # --- Overlay State Management ---
@@ -650,6 +700,10 @@ def _draw_callback() -> None:
             for coord, batch in list(entry.gpu_batches.items()):
                 if batch is not None:
                     batch.draw(flat_shader)
+            # Volume preview uses a separately color-baked, translucent LUT.
+            for coord, batch in list(getattr(entry, "volume_gpu_batches", {}).items()):
+                if batch is not None:
+                    batch.draw(flat_shader)
 
             # 4. Draw exposed voxel-cell boundaries over the colored faces.
             scene_props = getattr(getattr(context, "scene", None), "voxel_workspace", None)
@@ -658,6 +712,9 @@ def _draw_callback() -> None:
                 uniform_shader.bind()
                 uniform_shader.uniform_float("color", (0.025, 0.025, 0.03, 1.0))
                 for coord, batch in list(entry.gpu_edge_batches.items()):
+                    if batch is not None:
+                        batch.draw(uniform_shader)
+                for coord, batch in list(getattr(entry, "volume_gpu_edge_batches", {}).items()):
                     if batch is not None:
                         batch.draw(uniform_shader)
                 gpu.state.depth_mask_set(True)

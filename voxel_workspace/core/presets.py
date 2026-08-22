@@ -5,7 +5,7 @@ import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-PRESET_SCHEMA_VERSION = 2
+PRESET_SCHEMA_VERSION = 3
 
 
 def linear_to_srgb_byte(val: float) -> int:
@@ -59,12 +59,14 @@ class PalettePreset:
     schema_version: int
     color_space: str
     colors: List[PalettePresetEntry]
+    palette_type: str = "SURFACE"  # "SURFACE" or "VOLUME"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "name": self.name,
             "schema_version": self.schema_version,
             "color_space": self.color_space,
+            "palette_type": self.palette_type,
             "colors": [
                 {
                     "name": c.name,
@@ -83,23 +85,40 @@ class PalettePreset:
         name = str(data.get("name", "Unnamed Preset"))
         schema_version = int(data.get("schema_version", 1))
         color_space = str(data.get("color_space", "sRGB"))
+        pal_type = str(data.get("palette_type", "")).upper()
+        if schema_version >= 3 and pal_type not in {"SURFACE", "VOLUME"}:
+            raise ValueError("schema-3 preset palette_type must be SURFACE or VOLUME")
         raw_colors = data.get("colors", [])
         colors = []
         for item in raw_colors:
             c_name = str(item.get("name", ""))
             c_val = list(item.get("color", [0, 0, 0, 255]))
-            c_dom = str(item.get("domain", "SURFACE")).upper()
+            c_dom = str(item.get("domain", "")).upper()
+            if not c_dom:
+                c_dom = pal_type if pal_type in {"SURFACE", "VOLUME"} else "SURFACE"
             if c_dom not in {"SURFACE", "VOLUME"}:
                 c_dom = "SURFACE"
             # Ensure 4 components
             while len(c_val) < 4:
                 c_val.append(255)
             colors.append(PalettePresetEntry(name=c_name, color_srgb=c_val[:4], domain=c_dom))
+
+        if not pal_type:
+            # Infer from entries if legacy
+            if colors and all(c.domain == "VOLUME" for c in colors):
+                pal_type = "VOLUME"
+            else:
+                pal_type = "SURFACE"
+
+        if schema_version >= 3 and any(color.domain != pal_type for color in colors):
+            raise ValueError("schema-3 preset entry domain must match palette_type")
+
         return cls(
             name=name,
             schema_version=schema_version,
             color_space=color_space,
             colors=colors,
+            palette_type=pal_type,
         )
 
     @classmethod
