@@ -113,7 +113,7 @@ class VoxelMeshProperties(PropertyGroup):
         schema_version: IntProperty(
             name="Schema Version",
             description="Version of the voxel persistence layout",
-            default=2,
+            default=3,
         )
         palette_schema_version: IntProperty(
             name="Palette Schema Version",
@@ -354,7 +354,7 @@ def init_voxel_mesh_properties(
     extent_max: tuple[int, int, int] = (32, 32, 32),
     brick_size: int = 32,
     voxel_size: float = 1.0,
-    schema_version: int = 2,
+    schema_version: int = 3,
 ) -> str:
     """Initialize voxel metadata on a Blender Mesh ID and return its UUID."""
     if not uuid_str:

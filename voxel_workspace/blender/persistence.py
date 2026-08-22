@@ -1,6 +1,6 @@
 """Voxel brick persistence, IDProperty array serialization, and Blender memfile undo bridge.
 
-Authoritative schema (D2 / D3):
+Authoritative schema 3:
 - Metadata is stored on the Mesh datablock via PointerProperty `voxel_workspace` (VoxelMeshProperties):
     - uuid (str)
     - is_voxel_mesh (bool)
@@ -8,10 +8,12 @@ Authoritative schema (D2 / D3):
     - extent_min (int[3])
     - extent_max (int[3])
     - voxel_size (float)
-    - schema_version (int, default 1)
+    - schema_version (int, default 3)
 - Voxel bricks are stored as deterministic top-level IDProperty arrays on the Mesh datablock:
-    - 'vox_brick_<bx>_<by>_<bz>': IDPropertyArray of signed 32-bit ints (4 raw bytes per int)
-    - 'vox_brick_<bx>_<by>_<bz>_len': integer original byte length (brick_size^3)
+    - 'vox_brick_<bx>_<by>_<bz>': IDPropertyArray of signed 32-bit ints (uint8 indices packed into i32)
+    - 'vox_brick_<bx>_<by>_<bz>_len': integer original index byte length (brick_size^3)
+    - 'vox_domain_<bx>_<by>_<bz>': IDPropertyArray of signed 32-bit ints (1-bit-per-cell packed domain mask)
+    - 'vox_domain_<bx>_<by>_<bz>_len': integer original domain mask byte length (brick_size^3 // 8)
 - Empty / zero bricks are pruned from IDProperties to keep memfile state sparse and lightweight.
 """
 from array import array
@@ -26,10 +28,12 @@ except ImportError:
 
 from ..constants import BRICK_SIZE, BrickCoord
 from ..core.grid import VoxelGrid
+from ..core.tagged_grid import TaggedVoxelGrid, VoxelDomain, TaggedBrick
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 BRICK_KEY_PATTERN = re.compile(r"^vox_brick_(-?\d+)_(-?\d+)_(-?\d+)$")
+DOMAIN_KEY_PATTERN = re.compile(r"^vox_domain_(-?\d+)_(-?\d+)_(-?\d+)$")
 
 
 def pack_bytes_to_i32(data: bytes) -> Tuple[List[int], int]:
@@ -83,14 +87,56 @@ def unpack_brick(
     return np.frombuffer(raw_bytes, dtype=np.uint8).reshape((brick_size, brick_size, brick_size)).copy()
 
 
+def pack_domain_mask(domains: np.ndarray, indices: np.ndarray) -> bytes:
+    """Pack domain flags into a 1-bit-per-cell mask (4096 bytes for 32^3).
+    
+    Convention:
+    - 0 = SURFACE (VoxelDomain.SURFACE)
+    - 1 = VOLUME (VoxelDomain.VOLUME)
+    Index 0 cells ignore the bit and canonicalize to EMPTY on decode.
+    """
+    flat_domains = np.ascontiguousarray(domains, dtype=np.uint8).ravel()
+    flat_indices = np.ascontiguousarray(indices, dtype=np.uint8).ravel()
+    
+    # bit 0 for Surface, 1 for Volume
+    bits = (flat_domains == int(VoxelDomain.VOLUME)).astype(np.uint8)
+    packed = np.packbits(bits, bitorder='little').tobytes()
+    return packed
+
+
+def unpack_domain_mask(packed_bytes: bytes, indices: np.ndarray) -> np.ndarray:
+    """Unpack 1-bit-per-cell mask back to domain array (0=EMPTY, 1=SURFACE, 2=VOLUME)."""
+    flat_indices = np.ascontiguousarray(indices, dtype=np.uint8).ravel()
+    total_cells = len(flat_indices)
+    expected_bytes = (total_cells + 7) // 8
+    if len(packed_bytes) != expected_bytes:
+        raise ValueError(
+            f"Domain mask byte length {len(packed_bytes)} does not match expected {expected_bytes} for {total_cells} cells"
+        )
+    unpacked_bits = np.unpackbits(np.frombuffer(packed_bytes, dtype=np.uint8), bitorder='little')[:total_cells]
+    
+    # 0 -> SURFACE (1), 1 -> VOLUME (2)
+    domains = np.where(unpacked_bits == 1, int(VoxelDomain.VOLUME), int(VoxelDomain.SURFACE)).astype(np.uint8)
+    # Where index is 0, domain is canonicalized to EMPTY (0)
+    domains[flat_indices == 0] = int(VoxelDomain.EMPTY)
+    return domains.reshape(indices.shape)
+
+
 def brick_coord_to_key(coord: BrickCoord) -> str:
-    """Convert a brick coordinate tuple (bx, by, bz) to custom property key."""
+    """Convert a brick coordinate tuple (bx, by, bz) to custom property index key."""
     return f"vox_brick_{coord[0]}_{coord[1]}_{coord[2]}"
+
+
+def brick_coord_to_domain_key(coord: BrickCoord) -> str:
+    """Convert a brick coordinate tuple (bx, by, bz) to custom property domain mask key."""
+    return f"vox_domain_{coord[0]}_{coord[1]}_{coord[2]}"
 
 
 def key_to_brick_coord(key: str) -> Optional[BrickCoord]:
     """Parse custom property key to brick coordinate tuple, or None if not a brick key."""
     m = BRICK_KEY_PATTERN.match(key)
+    if not m:
+        m = DOMAIN_KEY_PATTERN.match(key)
     if not m:
         return None
     return int(m.group(1)), int(m.group(2)), int(m.group(3))
@@ -98,10 +144,10 @@ def key_to_brick_coord(key: str) -> Optional[BrickCoord]:
 
 def serialize_volume(
     mesh: Any,
-    grid: VoxelGrid,
+    grid: Union[TaggedVoxelGrid, VoxelGrid],
     dirty_only: bool = True,
 ) -> Set[BrickCoord]:
-    """Serialize voxel bricks to Mesh custom IDProperties.
+    """Serialize voxel bricks and domain masks to Mesh custom IDProperties.
     
     If dirty_only=True, only bricks in grid.dirty_bricks are updated/pruned.
     If dirty_only=False, all bricks are serialized and any non-existent bricks pruned.
@@ -128,21 +174,48 @@ def serialize_volume(
     for coord in target_coords:
         if coord is None:
             continue
-        key = brick_coord_to_key(coord)
-        key_len = key + "_len"
-        brick = grid.bricks.get(coord)
+        key_idx = brick_coord_to_key(coord)
+        key_idx_len = key_idx + "_len"
+        key_dom = brick_coord_to_domain_key(coord)
+        key_dom_len = key_dom + "_len"
 
-        if brick is not None and np.any(brick):
-            vals, byte_len = pack_brick(brick)
-            mesh[key] = vals
-            mesh[key_len] = byte_len
-            processed.add(coord)
+        brick_obj = grid.bricks.get(coord)
+
+        if brick_obj is not None:
+            if isinstance(brick_obj, TaggedBrick):
+                indices = brick_obj.indices
+                domains = brick_obj.domains
+            elif isinstance(brick_obj, np.ndarray):
+                indices = brick_obj
+                domains = np.where(indices > 0, int(VoxelDomain.SURFACE), int(VoxelDomain.EMPTY)).astype(np.uint8)
+            else:
+                indices = getattr(brick_obj, "indices", None)
+                domains = getattr(brick_obj, "domains", None)
+
+            if indices is not None and np.any(indices):
+                # 1. Pack index channel
+                idx_vals, idx_len = pack_brick(indices)
+                # 2. Pack domain channel
+                dom_bytes = pack_domain_mask(domains, indices)
+                dom_vals, dom_len = pack_bytes_to_i32(dom_bytes)
+
+                # Write IDProperties
+                mesh[key_idx] = idx_vals
+                mesh[key_idx_len] = idx_len
+                mesh[key_dom] = dom_vals
+                mesh[key_dom_len] = dom_len
+                processed.add(coord)
+            else:
+                # Prune empty or zero brick
+                for k in (key_idx, key_idx_len, key_dom, key_dom_len):
+                    if k in mesh:
+                        del mesh[k]
+                processed.add(coord)
         else:
-            # Prune empty or deleted brick from IDProperties
-            if key in mesh:
-                del mesh[key]
-            if key_len in mesh:
-                del mesh[key_len]
+            # Prune non-existent brick
+            for k in (key_idx, key_idx_len, key_dom, key_dom_len):
+                if k in mesh:
+                    del mesh[k]
             processed.add(coord)
 
     grid.dirty_bricks.clear()
@@ -151,42 +224,48 @@ def serialize_volume(
 
 def deserialize_volume(
     mesh: Any,
-    grid: Optional[VoxelGrid] = None,
-) -> VoxelGrid:
-    """Deserialize voxel bricks from Mesh custom IDProperties into a VoxelGrid.
+    grid: Optional[Union[TaggedVoxelGrid, VoxelGrid]] = None,
+) -> Union[TaggedVoxelGrid, VoxelGrid]:
+    """Deserialize voxel bricks from Mesh custom IDProperties into a TaggedVoxelGrid (or VoxelGrid).
     
-    Reads metadata from mesh.voxel_workspace and restores all vox_brick_* arrays.
-    Accepts persistence schema versions 1 and 2.
+    Reads metadata from mesh.voxel_workspace and restores both index and domain channels.
+    Supports Schema 3 (tagged index + domain channels) and handles Schema 1 & 2 legacy data.
     """
     if hasattr(mesh, "voxel_workspace"):
         props = mesh.voxel_workspace
+        schema_v = int(getattr(props, "schema_version", 3))
         brick_size = int(props.brick_size)
         extent_min = tuple(props.extent_min)
         extent_max = tuple(props.extent_max)
     else:
+        schema_v = 3
         brick_size = BRICK_SIZE
         extent_min = (0, 0, 0)
         extent_max = (32, 32, 32)
 
+    return_scalar = isinstance(grid, VoxelGrid)
+
     if grid is None:
-        grid = VoxelGrid(
+        target_grid = TaggedVoxelGrid(
             extent_min=extent_min,
             extent_max_exclusive=extent_max,
             brick_size=brick_size,
         )
     else:
-        grid.extent_min = extent_min
-        grid.extent_max_exclusive = extent_max
-        grid.brick_size = brick_size
-        grid.bricks.clear()
-        grid.dirty_bricks.clear()
+        target_grid = grid
+        target_grid.extent_min = extent_min
+        target_grid.extent_max_exclusive = extent_max
+        target_grid.brick_size = brick_size
+        target_grid.bricks.clear()
+        target_grid.dirty_bricks.clear()
 
-    # Discover and sort all brick keys for stable deterministic load
+    # Discover and sort all brick index keys
     brick_entries: List[Tuple[BrickCoord, str]] = []
     for k in list(mesh.keys()):
-        coord = key_to_brick_coord(k)
-        if coord is not None:
-            brick_entries.append((coord, k))
+        if k.startswith("vox_brick_") and not k.endswith("_len"):
+            coord = key_to_brick_coord(k)
+            if coord is not None:
+                brick_entries.append((coord, k))
 
     brick_entries.sort(key=lambda item: item[0])
 
@@ -194,27 +273,49 @@ def deserialize_volume(
         key_len = key + "_len"
         vals = mesh[key]
         byte_len = int(mesh[key_len]) if key_len in mesh else (brick_size ** 3)
-        brick = unpack_brick(vals, byte_len, brick_size=brick_size)
-        if np.any(brick):
-            grid.bricks[coord] = brick
+        indices = unpack_brick(vals, byte_len, brick_size=brick_size)
 
-    grid.dirty_bricks.clear()
-    return grid
+        if not np.any(indices):
+            continue
+
+        dom_key = brick_coord_to_domain_key(coord)
+        dom_key_len = dom_key + "_len"
+
+        if dom_key in mesh:
+            dom_vals = mesh[dom_key]
+            expected_dom_bytes = (brick_size ** 3 + 7) // 8
+            dom_byte_len = int(mesh[dom_key_len]) if dom_key_len in mesh else expected_dom_bytes
+            dom_raw = unpack_i32_to_bytes(dom_vals, dom_byte_len)
+            domains = unpack_domain_mask(dom_raw, indices)
+        else:
+            # Schema 1/2 fallback: all occupied cells are SURFACE
+            if schema_v >= 3:
+                raise ValueError(
+                    f"Corrupt schema-3 volume: brick {coord} is occupied but missing domain mask '{dom_key}'"
+                )
+            domains = np.where(indices > 0, int(VoxelDomain.SURFACE), int(VoxelDomain.EMPTY)).astype(np.uint8)
+
+        if isinstance(target_grid, TaggedVoxelGrid):
+            tagged_brick = TaggedBrick(brick_size)
+            tagged_brick.indices = indices
+            tagged_brick.domains = domains
+            target_grid.bricks[coord] = tagged_brick
+        elif isinstance(target_grid, VoxelGrid):
+            target_grid.bricks[coord] = indices
+
+    target_grid.dirty_bricks.clear()
+    return target_grid
 
 
 def commit_volume_state(
     target: Any,
-    grid: Optional[VoxelGrid] = None,
+    grid: Optional[Union[TaggedVoxelGrid, VoxelGrid]] = None,
     undo_message: str = "Voxel Edit",
     push_undo: bool = True,
     sync_mesh: bool = False,
     mesh_sync_callback: Optional[Any] = None,
 ) -> bool:
-    """Commit volume changes to Blender Mesh IDProperties and push Blender undo.
-    
-    Exposes a clean interface for committed strokes (Task 11) and structures a hook
-    for mesh synchronization (Task 8).
-    """
+    """Commit volume changes to Blender Mesh IDProperties and push Blender undo."""
     if target is None:
         return False
 
@@ -252,7 +353,7 @@ def commit_volume_state(
 
 def init_volume_storage(
     target: Any,
-    grid: Optional[VoxelGrid] = None,
+    grid: Optional[Union[TaggedVoxelGrid, VoxelGrid]] = None,
     push_undo: bool = True,
     undo_message: str = "Create Voxel Volume",
 ) -> str:
@@ -265,7 +366,7 @@ def init_volume_storage(
         brick_size = int(mesh.voxel_workspace.brick_size)
         extent_min = tuple(mesh.voxel_workspace.extent_min)
         extent_max = tuple(mesh.voxel_workspace.extent_max)
-        grid = VoxelGrid(extent_min=extent_min, extent_max_exclusive=extent_max, brick_size=brick_size)
+        grid = TaggedVoxelGrid(extent_min=extent_min, extent_max_exclusive=extent_max, brick_size=brick_size)
 
     serialize_volume(mesh, grid, dirty_only=False)
 

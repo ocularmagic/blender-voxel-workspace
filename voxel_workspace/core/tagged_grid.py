@@ -51,14 +51,44 @@ CELL_EMPTY = VoxelCell(VoxelDomain.EMPTY, 0)
 
 
 class TaggedBrick:
-    __slots__ = ("indices", "domains")
+    __slots__ = ("indices", "domains", "brick_size")
 
     def __init__(self, brick_size: int = BRICK_SIZE) -> None:
+        self.brick_size: int = brick_size
         self.indices: np.ndarray = np.zeros((brick_size, brick_size, brick_size), dtype=np.uint8)
         self.domains: np.ndarray = np.zeros((brick_size, brick_size, brick_size), dtype=np.uint8)
 
     def is_empty(self) -> bool:
         return not np.any(self.indices)
+
+    def copy(self) -> TaggedBrick:
+        b = TaggedBrick(self.brick_size)
+        b.indices = self.indices.copy()
+        b.domains = self.domains.copy()
+        return b
+
+    def __getitem__(self, item):
+        return self.indices[item]
+
+    def __setitem__(self, item, value):
+        self.indices[item] = value
+        if isinstance(value, np.ndarray):
+            self.domains[item] = np.where(value > 0, int(VoxelDomain.SURFACE), int(VoxelDomain.EMPTY))
+        elif int(value) == 0:
+            self.domains[item] = int(VoxelDomain.EMPTY)
+        else:
+            self.domains[item] = int(VoxelDomain.SURFACE)
+
+    @property
+    def shape(self):
+        return self.indices.shape
+
+    @property
+    def dtype(self):
+        return self.indices.dtype
+
+    def __array__(self, dtype=None):
+        return np.asarray(self.indices, dtype=dtype)
 
 
 class TaggedVoxelGrid:
@@ -98,6 +128,14 @@ class TaggedVoxelGrid:
     def get(self, coord: VoxelCoord) -> int:
         """Compatibility getter returning palette index, or 0 if empty / out-of-bounds."""
         return self.get_index(coord)
+
+    def set(self, coord: VoxelCoord, palette_index: int) -> None:
+        """Compatibility setter: sets Surface if palette_index > 0, else erases."""
+        idx = int(palette_index)
+        if idx == 0:
+            self.erase(coord)
+        else:
+            self.set_surface(coord, idx)
 
     def get_index(self, coord: VoxelCoord) -> int:
         return self.get_cell(coord).index
@@ -152,6 +190,10 @@ class TaggedVoxelGrid:
         if not self.in_extent(coord):
             return
         self.set_cell(coord, VoxelDomain.EMPTY, 0)
+
+    def read_apron(self, brick_coord: BrickCoord) -> np.ndarray:
+        """Compatibility method for read_index_apron without filters."""
+        return self.read_index_apron(brick_coord)
 
     def read_index_apron(
         self,

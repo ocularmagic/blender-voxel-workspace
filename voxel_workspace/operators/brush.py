@@ -90,6 +90,15 @@ def is_event_over_ui_region(context: Any, event: Any) -> bool:
 
 def snapshot_grid(grid):
     """Copy cells used for stable Place picking during one stroke."""
+    if hasattr(grid, "get_cell"):
+        from ..core.tagged_grid import TaggedVoxelGrid
+        snapshot = TaggedVoxelGrid(
+            extent_min=grid.extent_min,
+            extent_max_exclusive=grid.extent_max_exclusive,
+            brick_size=grid.brick_size,
+        )
+        snapshot.bricks = {coord: brick.copy() for coord, brick in grid.bricks.items()}
+        return snapshot
     from ..core.grid import VoxelGrid
     snapshot = VoxelGrid(
         extent_min=grid.extent_min,
