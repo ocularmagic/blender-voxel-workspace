@@ -21,6 +21,132 @@ PROXY_SOURCE_UUID_FLAG = "source_mesh_uuid"
 PROXY_ROOT_INSTANCE_UUID_FLAG = "voxel_root_instance_uuid"
 PROXY_PALETTE_INDEX_FLAG = "palette_index"
 
+# Render-only separation between an opaque Surface boundary and a Volume hull.
+# This is deliberately far below a visible pixel at normal voxel scales.
+VOLUME_CONTACT_GAP_RATIO = 1.0e-4
+
+
+def _volume_cells(grid: Any, palette_index: int) -> Set[Tuple[int, int, int]]:
+    """Return all cells occupied by one Volume palette index."""
+    cells: Set[Tuple[int, int, int]] = set()
+    s = int(grid.brick_size)
+    tagged = hasattr(grid, "read_index_apron")
+    for (bx, by, bz), brick in grid.bricks.items():
+        values = brick.indices if tagged else brick
+        mask = values == int(palette_index)
+        if tagged:
+            mask &= brick.domains == 2
+        for lx, ly, lz in np.argwhere(mask):
+            cells.add((bx * s + int(lx), by * s + int(ly), bz * s + int(lz)))
+    return cells
+
+
+def _face_connected_components(cells: Set[Tuple[int, int, int]]) -> Dict[Tuple[int, int, int], int]:
+    """Label six-connected voxel components without joining edge/corner contacts."""
+    labels: Dict[Tuple[int, int, int], int] = {}
+    remaining = set(cells)
+    component = 0
+    while remaining:
+        seed = remaining.pop()
+        stack = [seed]
+        labels[seed] = component
+        while stack:
+            x, y, z = stack.pop()
+            for neighbor in ((x + 1, y, z), (x - 1, y, z), (x, y + 1, z),
+                             (x, y - 1, z), (x, y, z + 1), (x, y, z - 1)):
+                if neighbor in remaining:
+                    remaining.remove(neighbor)
+                    labels[neighbor] = component
+                    stack.append(neighbor)
+        component += 1
+    return labels
+
+
+def _weld_proxy_quads(
+    positions: np.ndarray,
+    grid: Any,
+    palette_index: int,
+    voxel_size: float,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Weld proxy quads per six-connected component and inset Surface contacts."""
+    if len(positions) == 0:
+        return positions, np.empty((0, 3), dtype=np.int32)
+    if len(positions) % 4 != 0:
+        raise ValueError("Volume proxy buffers must contain four vertices per quad")
+
+    cells = _volume_cells(grid, palette_index)
+    components = _face_connected_components(cells)
+    epsilon = float(voxel_size) * VOLUME_CONTACT_GAP_RATIO
+    tagged = hasattr(grid, "get_domain")
+    quads = positions.reshape((-1, 4, 3))
+    welded: List[np.ndarray] = []
+    vertex_map: Dict[Tuple[int, Tuple[float, float, float]], int] = {}
+    contact_normals: Dict[int, Set[Tuple[int, int, int]]] = {}
+    quad_indices: List[Tuple[int, int, int, int]] = []
+
+    for quad in quads:
+        raw_normal = np.cross(quad[1] - quad[0], quad[2] - quad[0])
+        axis = int(np.argmax(np.abs(raw_normal)))
+        sign = 1 if raw_normal[axis] > 0 else -1
+        normal = np.zeros(3, dtype=np.int32)
+        normal[axis] = sign
+        center = np.mean(quad, axis=0)
+        inside_point = center - normal.astype(np.float32) * (float(voxel_size) * 1.0e-3)
+        inside = tuple(int(np.floor(float(v) / float(voxel_size))) for v in inside_point)
+        component = components.get(inside)
+        if component is None:
+            raise ValueError(f"Could not associate Volume proxy face with cell {inside}")
+
+        touches_surface = False
+        if tagged:
+            from ..core.tagged_grid import VoxelDomain
+            other_axes = [candidate for candidate in range(3) if candidate != axis]
+            plane = int(round(float(quad[0][axis]) / float(voxel_size)))
+            inside_axis = plane - 1 if sign > 0 else plane
+            ranges = []
+            for other_axis in other_axes:
+                lower = int(round(float(np.min(quad[:, other_axis])) / float(voxel_size)))
+                upper = int(round(float(np.max(quad[:, other_axis])) / float(voxel_size)))
+                ranges.append(range(lower, upper))
+            for first in ranges[0]:
+                for second in ranges[1]:
+                    inside_cell = [0, 0, 0]
+                    inside_cell[axis] = inside_axis
+                    inside_cell[other_axes[0]] = first
+                    inside_cell[other_axes[1]] = second
+                    outside = tuple(inside_cell[i] + int(normal[i]) for i in range(3))
+                    if grid.get_domain(outside) == VoxelDomain.SURFACE:
+                        touches_surface = True
+                        break
+                if touches_surface:
+                    break
+
+        mapped: List[int] = []
+        for point in quad:
+            point_key = tuple(round(float(v), 7) for v in point)
+            key = (component, point_key)
+            vertex_index = vertex_map.get(key)
+            if vertex_index is None:
+                vertex_index = len(welded)
+                vertex_map[key] = vertex_index
+                welded.append(point.astype(np.float32).copy())
+            mapped.append(vertex_index)
+            if touches_surface:
+                contact_normals.setdefault(vertex_index, set()).add(tuple(int(v) for v in normal))
+        quad_indices.append((mapped[0], mapped[1], mapped[2], mapped[3]))
+
+    for vertex_index, normals in contact_normals.items():
+        displacement = np.zeros(3, dtype=np.float32)
+        for normal in normals:
+            displacement -= np.asarray(normal, dtype=np.float32) * epsilon
+        welded[vertex_index] += displacement
+
+    triangles = np.empty((len(quad_indices) * 2, 3), dtype=np.int32)
+    for quad_index, (a, b, c, d) in enumerate(quad_indices):
+        triangles[quad_index * 2] = (a, b, c)
+        triangles[quad_index * 2 + 1] = (a, c, d)
+    return np.asarray(welded, dtype=np.float32), triangles
+
 
 def iter_roots_for_mesh(mesh: Any) -> List[Any]:
     """Find all canonical Voxel Root objects referencing the given mesh."""
@@ -245,7 +371,6 @@ def rebuild_proxy_geometry(
     # Concatenate buffers
     sorted_coords = sorted(proxy_buffers.keys())
     all_positions = []
-    all_indices = []
     vert_offset = 0
 
     for coord in sorted_coords:
@@ -253,7 +378,6 @@ def rebuild_proxy_geometry(
         if buf.quad_count == 0 or len(buf.positions) == 0:
             continue
         all_positions.append(buf.positions)
-        all_indices.append(buf.indices + vert_offset)
         vert_offset += len(buf.positions)
 
     proxy_mesh.clear_geometry()
@@ -262,7 +386,12 @@ def rebuild_proxy_geometry(
         return
 
     positions = np.concatenate(all_positions, axis=0)
-    indices = np.concatenate(all_indices, axis=0)
+    positions, indices = _weld_proxy_quads(
+        positions,
+        grid,
+        palette_index,
+        v_size,
+    )
     total_verts = len(positions)
     total_tris = len(indices)
     total_loops = total_tris * 3
