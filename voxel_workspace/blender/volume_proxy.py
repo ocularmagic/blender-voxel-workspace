@@ -88,14 +88,14 @@ def find_proxy(root_or_parent: Any, palette_index: int) -> Optional[Any]:
 
 def ensure_proxy(root_or_parent: Any, mesh: Any, entry_item: Any) -> Any:
     """Ensure a child proxy object exists under Voxel Root for the specified volume palette entry."""
-    if bpy is None or root_or_parent is None or entry_item is None:
+    if bpy is None or root_or_parent is None:
         return None
 
     from .object_graph import is_voxel_root, resolve_voxel_root
     root = root_or_parent if is_voxel_root(root_or_parent) else resolve_voxel_root(root_or_parent)
     parent_obj = root if root is not None else root_or_parent
 
-    pal_idx = int(entry_item.index)
+    pal_idx = int(getattr(entry_item, "index", 1)) if entry_item is not None else 1
     proxy_obj = find_proxy(parent_obj, pal_idx)
     mesh_uuid = getattr(mesh.voxel_workspace, "uuid", "") if (mesh and hasattr(mesh, "voxel_workspace")) else ""
     root_uuid = parent_obj.get("voxel_instance_uuid", "") if hasattr(parent_obj, "get") else ""
@@ -144,11 +144,12 @@ def ensure_proxy(root_or_parent: Any, mesh: Any, entry_item: Any) -> Any:
     proxy_obj.matrix_local = np.eye(4)
 
     # Ensure proxy material slot 0
-    mat = ensure_entry_material(mesh, entry_item)
-    if len(proxy_obj.data.materials) == 0:
-        proxy_obj.data.materials.append(mat)
-    else:
-        proxy_obj.data.materials[0] = mat
+    if entry_item is not None:
+        mat = ensure_entry_material(mesh, entry_item, domain="VOLUME")
+        if len(proxy_obj.data.materials) == 0:
+            proxy_obj.data.materials.append(mat)
+        else:
+            proxy_obj.data.materials[0] = mat
 
     return proxy_obj
 
@@ -293,7 +294,7 @@ def reconcile_volume_proxies(
         if child.get(PROXY_OBJECT_FLAG, False):
             child_mesh_uuid = child.get(PROXY_SOURCE_UUID_FLAG, "")
             child_root_uuid = child.get(PROXY_ROOT_INSTANCE_UUID_FLAG, "")
-            if (mesh_uuid and child_mesh_uuid and child_mesh_uuid != mesh_uuid) or (root_uuid and child_root_uuid and child_root_uuid != root_uuid):
+            if (mesh_uuid and child_mesh_uuid and child_mesh_uuid != mesh_uuid):
                 child_mesh = child.data
                 bpy.data.objects.remove(child, do_unlink=True)
                 if child_mesh is not None and child_mesh.users == 0:
@@ -314,11 +315,12 @@ def reconcile_volume_proxies(
                 del volume_entry.volume_proxy_buffers[pal_idx]
 
     # 2. Ensure and rebuild geometry for each used VOLUME index
-    palette_lookup = {e.index: e for e in props.palette}
+    from .material_domains import find_entry
     for pal_idx in vol_indices:
-        entry_item = palette_lookup.get(pal_idx)
-        if entry_item is None:
-            continue
+        # Find entry in typed palette or legacy palette
+        entry_item = find_entry(mesh, "VOLUME", pal_idx)
+        if entry_item is None and hasattr(props, "palette"):
+            entry_item = next((e for e in props.palette if e.index == pal_idx), None)
         proxy_obj = ensure_proxy(parent_obj, mesh, entry_item)
         rebuild_proxy_geometry(
             proxy_obj,

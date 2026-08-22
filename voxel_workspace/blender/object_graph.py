@@ -260,6 +260,8 @@ def iter_roots_for_mesh(mesh: Any) -> List[Any]:
             elif surf is not None and mesh_uuid and getattr(surf.data, "voxel_workspace", None):
                 if surf.data.voxel_workspace.uuid == mesh_uuid:
                     roots.append(obj)
+            elif not surf and getattr(obj, "data", None) == mesh:
+                roots.append(obj)
     return roots
 
 

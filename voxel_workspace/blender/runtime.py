@@ -173,8 +173,16 @@ def deduplicate_mesh_uuids(scene=None, depsgraph=None) -> List[Tuple[Any, str, s
 
                 # Fork palette datablocks for the duplicated mesh
                 props = mesh.voxel_workspace
+                from .material_domains import copy_entry_material_for_mesh
+                if hasattr(props, "surface_palette"):
+                    for entry in props.surface_palette:
+                        if entry.index > 0:
+                            copy_entry_material_for_mesh(entry, entry, new_uuid)
+                if hasattr(props, "volume_palette"):
+                    for entry in props.volume_palette:
+                        if entry.index > 0:
+                            copy_entry_material_for_mesh(entry, entry, new_uuid)
                 if hasattr(props, "palette"):
-                    from .material_domains import copy_entry_material_for_mesh
                     for entry in props.palette:
                         if entry.index > 0:
                             copy_entry_material_for_mesh(entry, entry, new_uuid)
@@ -250,7 +258,8 @@ def reconcile_all_palette_caches(pack_images: bool = False) -> None:
 
     for mesh in bpy.data.meshes:
         if hasattr(mesh, "voxel_workspace") and mesh.voxel_workspace.is_voxel_mesh:
-            if len(mesh.voxel_workspace.palette) == 0:
+            props = mesh.voxel_workspace
+            if (hasattr(props, "surface_palette") and len(props.surface_palette) == 0) or len(props.palette) == 0:
                 ensure_palette(mesh)
             migrate_native_material_domains(mesh)
             

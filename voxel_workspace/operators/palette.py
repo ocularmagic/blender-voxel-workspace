@@ -136,6 +136,8 @@ def reconcile_native_render(mesh: Any) -> None:
     entry.palette_lut = None
     from ..blender.mesh_sync import sync_volume_mesh
     sync_volume_mesh(mesh, grid=entry.grid, entry=entry, dirty_only=False, ensure_material=False)
+    from ..blender.volume_proxy import reconcile_all_root_instances
+    reconcile_all_root_instances(mesh, entry.grid, volume_entry=entry, dirty_bricks=None)
     drop_palette_lut(mesh.voxel_workspace.uuid)
     update_volume_gpu_preview(entry, dirty_only=False)
 
@@ -388,6 +390,29 @@ class VOXEL_OT_set_palette_material_domain(Operator):
             entry.material_domain = self.domain
             entry.material = replacement_material
             entry.material_owned = old_owned
+            props = mesh.voxel_workspace
+            if hasattr(props, "surface_palette") and hasattr(props, "volume_palette"):
+                from ..blender.material_domains import find_entry, initialize_surface_entry, initialize_volume_entry
+                # Sync typed palettes
+                if self.domain == "VOLUME":
+                    entry_vol = find_entry(mesh, "VOLUME", self.index)
+                    if entry_vol is None:
+                        entry_vol = props.volume_palette.add()
+                        initialize_volume_entry(mesh, entry_vol, index=self.index, name=entry.name, color=tuple(entry.color))
+                    else:
+                        entry_vol.material = replacement_material
+                else:
+                    entry_surf = find_entry(mesh, "SURFACE", self.index)
+                    if entry_surf is None:
+                        entry_surf = props.surface_palette.add()
+                        initialize_surface_entry(mesh, entry_surf, index=self.index, name=entry.name, color=tuple(entry.color))
+                    else:
+                        entry_surf.material = replacement_material
+                    # Remove from volume_palette if present
+                    for pos, ev in enumerate(list(props.volume_palette)):
+                        if ev.index == self.index:
+                            props.volume_palette.remove(pos)
+                            break
             reconcile_native_render(mesh)
         except Exception as exc:
             entry.material_domain = old_domain

@@ -133,7 +133,17 @@ class VoxelMeshProperties(PropertyGroup):
         palette: CollectionProperty(
             type=VoxelPaletteEntry,
             name="Palette",
-            description="Per-volume color palette",
+            description="Legacy shared color palette (deprecated, use surface_palette/volume_palette)",
+        )
+        surface_palette: CollectionProperty(
+            type=VoxelPaletteEntry,
+            name="Surface Palette",
+            description="Per-volume Surface color palette (indices 1-255)",
+        )
+        volume_palette: CollectionProperty(
+            type=VoxelPaletteEntry,
+            name="Volume Palette",
+            description="Per-volume Volume color palette (indices 1-255)",
         )
         uuid: StringProperty(
             name="Volume UUID",
@@ -238,10 +248,41 @@ class VoxelSceneProperties(PropertyGroup):
         )
         active_palette_index: IntProperty(
             name="Active Palette Index",
-            description="Stored color index used by the voxel brush",
+            description="Stored color index used by the voxel brush (legacy alias)",
             default=1,
             min=1,
             max=255,
+        )
+        active_surface_palette_index: IntProperty(
+            name="Active Surface Palette Index",
+            description="Active index for Surface editing (1-255)",
+            default=1,
+            min=1,
+            max=255,
+        )
+        active_volume_palette_index: IntProperty(
+            name="Active Volume Palette Index",
+            description="Active index for Volume editing (1-255)",
+            default=1,
+            min=1,
+            max=255,
+        )
+        active_voxel_tool: EnumProperty(
+            name="Active Voxel Tool",
+            items=[
+                ("ADD_SURFACE", "Add Surface", "Place surface voxels"),
+                ("ADD_VOLUME", "Add Volume", "Place volume voxels"),
+                ("ERASE", "Erase", "Erase voxels"),
+            ],
+            default="ADD_SURFACE",
+        )
+        active_palette_tab: EnumProperty(
+            name="Active Palette Tab",
+            items=[
+                ("SURFACE", "Surface", "Surface material palette"),
+                ("VOLUME", "Volume", "Volume material palette"),
+            ],
+            default="SURFACE",
         )
         active_palette_choice: EnumProperty(
             name="Placement Color",
@@ -303,48 +344,71 @@ def migrate_native_material_domains(mesh: Any) -> bool:
 
 
 def ensure_palette(mesh: Any) -> None:
-    """Ensure the mesh palette collection contains index 0 and default colors 1-8 if empty.
+    """Ensure surface and volume palette collections contain default entries if empty.
     
     Idempotent and never pushes undo. Old .blend files or new volumes receive
     the defaults without altering voxel indices.
     """
     props = mesh.voxel_workspace
-    if not hasattr(props, "palette"):
+    if not hasattr(props, "surface_palette") or not hasattr(props, "volume_palette"):
         return
 
-    if len(props.palette) > 0 and props.palette_schema_version < 2:
-        migrate_native_material_domains(mesh)
-    
-    # If palette already has entries, do not re-inject deleted indices
-    if len(props.palette) > 0:
-        return
+    # Populate Surface Palette if empty
+    if len(props.surface_palette) == 0:
+        from .material_domains import initialize_surface_entry
 
-    from .material_domains import initialize_palette_entry
+        # Index 0 placeholder
+        item = props.surface_palette.add()
+        item.index = 0
+        item.name = "Empty"
+        item.color = DEFAULT_PALETTE[0]
+        item.material_owned = True
 
-    # Check index 0 (reserved empty)
-    item = props.palette.add()
-    item.index = 0
-    item.name = "Empty"
-    item.color = DEFAULT_PALETTE[0]
-    item.material_domain = "SURFACE"
-    item.material_owned = True
+        default_names = {
+            1: "Neutral Gray",
+            2: "Red",
+            3: "Green",
+            4: "Blue",
+            5: "Yellow",
+            6: "Magenta",
+            7: "Cyan",
+            8: "Orange",
+        }
+        for idx in range(1, len(DEFAULT_PALETTE)):
+            item = props.surface_palette.add()
+            name = default_names.get(idx, f"Color {idx}")
+            color = DEFAULT_PALETTE[idx]
+            initialize_surface_entry(mesh, item, index=idx, name=name, color=color)
 
-    # Populate default indices 1..8
-    default_names = {
-        1: "Neutral Gray",
-        2: "Red",
-        3: "Green",
-        4: "Blue",
-        5: "Yellow",
-        6: "Magenta",
-        7: "Cyan",
-        8: "Orange",
-    }
-    for idx in range(1, len(DEFAULT_PALETTE)):
+    # Populate Volume Palette if empty
+    if len(props.volume_palette) == 0:
+        from .material_domains import initialize_volume_entry
+
+        # Index 0 placeholder
+        item = props.volume_palette.add()
+        item.index = 0
+        item.name = "Empty"
+        item.color = DEFAULT_PALETTE[0]
+        item.material_owned = True
+
+        # Index 1 default: Mist
+        item1 = props.volume_palette.add()
+        initialize_volume_entry(mesh, item1, index=1, name="Mist", color=(0.8, 0.85, 0.9, 1.0))
+
+    # Keep legacy palette in sync for migration reads if present
+    if hasattr(props, "palette") and len(props.palette) == 0:
+        from .material_domains import initialize_palette_entry
         item = props.palette.add()
-        name = default_names.get(idx, f"Color {idx}")
-        color = DEFAULT_PALETTE[idx]
-        initialize_palette_entry(mesh, item, index=idx, name=name, color=color, domain="SURFACE")
+        item.index = 0
+        item.name = "Empty"
+        item.color = DEFAULT_PALETTE[0]
+        item.material_domain = "SURFACE"
+        item.material_owned = True
+        for idx in range(1, len(DEFAULT_PALETTE)):
+            item = props.palette.add()
+            name = default_names.get(idx, f"Color {idx}")
+            color = DEFAULT_PALETTE[idx]
+            initialize_palette_entry(mesh, item, index=idx, name=name, color=color, domain="SURFACE")
 
 
 def init_voxel_mesh_properties(

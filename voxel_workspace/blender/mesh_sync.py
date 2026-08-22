@@ -126,7 +126,10 @@ def sync_volume_mesh(
     mesh.clear_geometry()
 
     # Ensure palette initialized before reconciling slots
-    if len(mesh.voxel_workspace.palette) == 0:
+    if (
+        (hasattr(mesh.voxel_workspace, "surface_palette") and len(mesh.voxel_workspace.surface_palette) == 0)
+        or len(mesh.voxel_workspace.palette) == 0
+    ):
         from .properties import ensure_palette
         ensure_palette(mesh)
 
@@ -136,8 +139,8 @@ def sync_volume_mesh(
 
     # Volume proxies must reconcile even when filtering leaves the primary
     # surface mesh empty (for example a mist-only volume).
-    from .volume_proxy import reconcile_all_instances
-    reconcile_all_instances(
+    from .volume_proxy import reconcile_all_root_instances
+    reconcile_all_root_instances(
         mesh,
         grid,
         volume_entry=entry,
@@ -173,13 +176,12 @@ def sync_volume_mesh(
     # Map each triangle to its corresponding material slot
     if slot_map:
         # Vectorized lookup via mapping array
-        max_pal_idx = int(np.max(tri_palette_indices)) if len(tri_palette_indices) > 0 else 0
-        lut_size = max(256, max_pal_idx + 1)
-        slot_lut = np.zeros(lut_size, dtype=np.int32)
+        tri_palette_indices_clean = np.clip(tri_palette_indices, 0, 255)
+        slot_lut = np.zeros(256, dtype=np.int32)
         for pal_idx, slot_idx in slot_map.items():
-            if pal_idx < lut_size:
+            if 0 <= pal_idx < 256:
                 slot_lut[pal_idx] = slot_idx
-        tri_material_slots = slot_lut[tri_palette_indices]
+        tri_material_slots = slot_lut[tri_palette_indices_clean]
     else:
         tri_material_slots = np.zeros(total_tris, dtype=np.int32)
 
@@ -193,6 +195,17 @@ def sync_volume_mesh(
     mesh.polygons.add(total_tris)
     mesh.polygons.foreach_set("loop_start", np.arange(0, total_loops, 3, dtype=np.int32))
     mesh.polygons.foreach_set("loop_total", np.full(total_tris, 3, dtype=np.int32))
+
+    # Reconcile native surface material slots before assigning polygon material_index
+    from .material_domains import reconcile_surface_slots
+    slot_map = reconcile_surface_slots(mesh, grid)
+    if slot_map:
+        tri_palette_indices_clean = np.clip(tri_palette_indices, 0, 255)
+        slot_lut = np.zeros(256, dtype=np.int32)
+        for pal_idx, slot_idx in slot_map.items():
+            if 0 <= pal_idx < 256:
+                slot_lut[pal_idx] = slot_idx
+        tri_material_slots = slot_lut[tri_palette_indices_clean]
     mesh.polygons.foreach_set("material_index", tri_material_slots)
 
     # Create/update CORNER INT palette_index attribute

@@ -1,5 +1,5 @@
 """Native Blender Material lifecycle and domain management for voxel volumes."""
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 import uuid
 
 try:
@@ -10,11 +10,41 @@ except ImportError:
     Material = Mesh = object
 
 from ..constants import DEFAULT_PALETTE
+from ..core.tagged_grid import VoxelDomain, TaggedVoxelGrid
 
 
 # Generated material kinds
 SURFACE_DEFAULT = "SURFACE_DEFAULT"
 VOLUME_DEFAULT = "VOLUME_DEFAULT"
+
+
+def get_palette(mesh: Any, domain: Union[VoxelDomain, str, int] = VoxelDomain.SURFACE) -> Any:
+    """Get the typed palette CollectionProperty for the given mesh and domain."""
+    if mesh is None or not hasattr(mesh, "voxel_workspace"):
+        return []
+    props = mesh.voxel_workspace
+    dom_str = domain if isinstance(domain, str) else (
+        "VOLUME" if int(domain) == int(VoxelDomain.VOLUME) else "SURFACE"
+    )
+    if dom_str.upper() == "VOLUME":
+        if hasattr(props, "volume_palette") and len(props.volume_palette) > 0:
+            return props.volume_palette
+        # Fallback to filtering legacy palette
+        return [e for e in props.palette if getattr(e, "material_domain", "SURFACE") == "VOLUME"]
+    else:
+        if hasattr(props, "surface_palette") and len(props.surface_palette) > 0:
+            return props.surface_palette
+        # Fallback to filtering legacy palette
+        return [e for e in props.palette if getattr(e, "material_domain", "SURFACE") == "SURFACE"]
+
+
+def find_entry(mesh: Any, domain: Union[VoxelDomain, str, int], index: int) -> Optional[Any]:
+    """Find a palette entry by domain and typed palette index."""
+    palette = get_palette(mesh, domain)
+    for entry in palette:
+        if int(entry.index) == int(index):
+            return entry
+    return None
 
 
 def create_default_surface_material(
@@ -73,7 +103,7 @@ def create_default_volume_material(
 
     mesh_uuid = getattr(mesh.voxel_workspace, "uuid", "unknown") if mesh and hasattr(mesh, "voxel_workspace") else "unknown"
     idx = getattr(entry, "index", 1) if entry else 1
-    name = getattr(entry, "name", "") or f"Color {idx}"
+    name = getattr(entry, "name", "") or f"Mist {idx}"
     mat_name = f"VoxelVolume_{name}_{idx}"
 
     mat = bpy.data.materials.new(name=mat_name)
@@ -86,7 +116,7 @@ def create_default_volume_material(
     p_vol = nodes.new("ShaderNodeVolumePrincipled")
     links.new(p_vol.outputs["Volume"], out.inputs["Volume"])
 
-    col = volume_color or (tuple(entry.color) if entry else (0.2, 0.7, 1.0, 1.0))
+    col = volume_color or (tuple(entry.color) if entry else (0.8, 0.85, 0.9, 1.0))
     if "Color" in p_vol.inputs:
         p_vol.inputs["Color"].default_value = (float(col[0]), float(col[1]), float(col[2]), 1.0)
     if "Density" in p_vol.inputs:
@@ -101,16 +131,26 @@ def create_default_volume_material(
     return mat
 
 
-def ensure_entry_material(mesh: Any, entry: Any) -> Any:
+def ensure_entry_material(
+    mesh: Any,
+    entry: Any,
+    domain: Optional[Union[VoxelDomain, str, int]] = None,
+) -> Any:
     """Ensure a palette entry has a valid native Material bound according to its domain."""
     if bpy is None or entry is None:
         return None
 
-    domain = getattr(entry, "material_domain", "SURFACE")
+    if domain is not None:
+        dom_str = domain if isinstance(domain, str) else (
+            "VOLUME" if int(domain) == int(VoxelDomain.VOLUME) else "SURFACE"
+        )
+    else:
+        dom_str = getattr(entry, "material_domain", "SURFACE")
+
     mat = getattr(entry, "material", None)
 
     if mat is None:
-        if domain == "VOLUME":
+        if dom_str.upper() == "VOLUME":
             mat = create_default_volume_material(mesh, entry)
         else:
             mat = create_default_surface_material(mesh, entry)
@@ -125,7 +165,8 @@ def copy_entry_material_for_mesh(src_entry: Any, dst_entry: Any, new_mesh_uuid: 
     if bpy is None or src_entry is None or dst_entry is None:
         return
 
-    dst_entry.material_domain = getattr(src_entry, "material_domain", "SURFACE")
+    if hasattr(dst_entry, "material_domain") and hasattr(src_entry, "material_domain"):
+        dst_entry.material_domain = getattr(src_entry, "material_domain", "SURFACE")
     dst_entry.material_owned = getattr(src_entry, "material_owned", True)
     src_mat = getattr(src_entry, "material", None)
 
@@ -153,7 +194,11 @@ def assign_external_material(entry: Any, material: Any) -> None:
     entry.material_owned = False
 
 
-def make_entry_material_single_user(mesh: Any, entry: Any) -> Any:
+def make_entry_material_single_user(
+    mesh: Any,
+    entry: Any,
+    domain: Optional[Union[VoxelDomain, str, int]] = None,
+) -> Any:
     """Make an entry's material single-user (owned by this mesh)."""
     if bpy is None or entry is None:
         return None
@@ -161,7 +206,7 @@ def make_entry_material_single_user(mesh: Any, entry: Any) -> Any:
     mesh_uuid = getattr(mesh.voxel_workspace, "uuid", "unknown") if mesh and hasattr(mesh, "voxel_workspace") else "unknown"
 
     if curr_mat is None:
-        return ensure_entry_material(mesh, entry)
+        return ensure_entry_material(mesh, entry, domain=domain)
 
     new_mat = curr_mat.copy()
     new_mat["voxel_workspace_owned"] = True
@@ -211,11 +256,27 @@ def cleanup_owned_materials(materials: List[Any]) -> int:
     return removed
 
 
-def palette_materials(mesh: Any) -> List[Any]:
-    """Snapshot all non-null Material pointers bound by a palette."""
+def palette_materials(
+    mesh: Any,
+    domain: Optional[Union[VoxelDomain, str, int]] = None,
+) -> List[Any]:
+    """Snapshot all non-null Material pointers bound by palette(s)."""
     if mesh is None or not hasattr(mesh, "voxel_workspace"):
         return []
-    return [entry.material for entry in mesh.voxel_workspace.palette if entry.material is not None]
+    props = mesh.voxel_workspace
+    mats = []
+    if domain is not None:
+        pal = get_palette(mesh, domain)
+        return [e.material for e in pal if getattr(e, "material", None) is not None]
+    
+    # All palettes
+    if hasattr(props, "surface_palette"):
+        mats.extend([e.material for e in props.surface_palette if getattr(e, "material", None) is not None])
+    if hasattr(props, "volume_palette"):
+        mats.extend([e.material for e in props.volume_palette if getattr(e, "material", None) is not None])
+    if not mats and hasattr(props, "palette"):
+        mats.extend([e.material for e in props.palette if getattr(e, "material", None) is not None])
+    return mats
 
 
 def cleanup_legacy_atlas_datablocks(mesh: Any) -> None:
@@ -257,12 +318,13 @@ def set_generated_surface_base_color(entry: Any, color: Optional[Tuple[float, fl
     return False
 
 
-def allocated_entries(mesh: Any) -> List[Any]:
-    """Return all allocated non-zero palette entries on a mesh."""
-    if mesh is None or not hasattr(mesh, "voxel_workspace"):
-        return []
-    props = mesh.voxel_workspace
-    return sorted([e for e in props.palette if e.index > 0], key=lambda e: e.index)
+def allocated_entries(
+    mesh: Any,
+    domain: Union[VoxelDomain, str, int] = VoxelDomain.SURFACE,
+) -> List[Any]:
+    """Return all allocated non-zero palette entries on a mesh for the specified domain."""
+    pal = get_palette(mesh, domain)
+    return sorted([e for e in pal if e.index > 0], key=lambda e: e.index)
 
 
 def used_palette_indices(grid: Any) -> Set[int]:
@@ -271,6 +333,11 @@ def used_palette_indices(grid: Any) -> Set[int]:
         return set()
     used = set()
     import numpy as np
+    if hasattr(grid, "iter_used_indices"):
+        used.update(grid.iter_used_indices(VoxelDomain.SURFACE))
+        used.update(grid.iter_used_indices(VoxelDomain.VOLUME))
+        return used
+
     for brick in grid.bricks.values():
         if np.any(brick):
             unq = np.unique(brick)
@@ -279,27 +346,55 @@ def used_palette_indices(grid: Any) -> Set[int]:
 
 
 def used_surface_indices(mesh: Any, grid: Any) -> List[int]:
-    """Return sorted list of used palette indices that belong to the SURFACE domain."""
+    """Return sorted list of used palette indices for the SURFACE domain."""
+    if grid is None:
+        return []
+    if hasattr(grid, "iter_used_indices"):
+        return sorted(list(grid.iter_used_indices(VoxelDomain.SURFACE)))
+
     used = used_palette_indices(grid)
     if not used or mesh is None or not hasattr(mesh, "voxel_workspace"):
         return sorted(list(used))
     
     props = mesh.voxel_workspace
-    entry_domain_map = {e.index: getattr(e, "material_domain", "SURFACE") for e in props.palette}
-    surface_used = [idx for idx in used if entry_domain_map.get(idx, "SURFACE") == "SURFACE"]
-    return sorted(surface_used)
+    if hasattr(props, "palette") and len(props.palette) > 0:
+        entry_domain_map = {e.index: getattr(e, "material_domain", "SURFACE") for e in props.palette}
+        surf_used = [idx for idx in used if entry_domain_map.get(idx, "SURFACE") == "SURFACE"]
+        return sorted(surf_used)
+
+    if hasattr(props, "surface_palette") and len(props.surface_palette) > 0:
+        surf_indices = {e.index for e in props.surface_palette if e.index > 0}
+        return sorted(list(used & surf_indices))
+    
+    return sorted(list(used))
 
 
 def used_volume_indices(mesh: Any, grid: Any) -> List[int]:
-    """Return sorted list of used palette indices that belong to the VOLUME domain."""
+    """Return sorted list of used palette indices for the VOLUME domain."""
+    if grid is None:
+        return []
+    if hasattr(grid, "iter_used_indices"):
+        tagged_vol = grid.iter_used_indices(VoxelDomain.VOLUME)
+        if tagged_vol:
+            return sorted(list(tagged_vol))
+
     used = used_palette_indices(grid)
     if not used or mesh is None or not hasattr(mesh, "voxel_workspace"):
         return []
     
     props = mesh.voxel_workspace
-    entry_domain_map = {e.index: getattr(e, "material_domain", "SURFACE") for e in props.palette}
-    volume_used = [idx for idx in used if entry_domain_map.get(idx, "SURFACE") == "VOLUME"]
-    return sorted(volume_used)
+    if hasattr(props, "palette") and len(props.palette) > 0:
+        entry_domain_map = {e.index: getattr(e, "material_domain", "SURFACE") for e in props.palette}
+        volume_used = [idx for idx in used if entry_domain_map.get(idx, "SURFACE") == "VOLUME"]
+        if volume_used:
+            return sorted(volume_used)
+
+    if hasattr(props, "volume_palette") and len(props.volume_palette) > 0:
+        vol_indices = {e.index for e in props.volume_palette if e.index > 0}
+        if (used & vol_indices):
+            return sorted(list(used & vol_indices))
+
+    return []
 
 
 def reconcile_surface_slots(mesh: Any, grid: Any) -> Dict[int, int]:
@@ -319,14 +414,15 @@ def reconcile_surface_slots(mesh: Any, grid: Any) -> Dict[int, int]:
         mesh.materials.clear()
         return slot_map
 
-    # Build entry lookup
-    palette_lookup = {e.index: e for e in props.palette} if props else {}
+    # Build entry lookup from surface_palette
+    pal = get_palette(mesh, VoxelDomain.SURFACE)
+    palette_lookup = {e.index: e for e in pal}
 
     # Clear and populate slots in deterministic sorted order
     mesh.materials.clear()
     for slot_idx, pal_idx in enumerate(surface_indices):
         entry = palette_lookup.get(pal_idx)
-        mat = ensure_entry_material(mesh, entry) if entry else None
+        mat = ensure_entry_material(mesh, entry, domain=VoxelDomain.SURFACE) if entry else None
         if mat is None:
             # Stable shared fallback for corrupt/legacy grids whose index has no
             # palette entry. Never allocate an anonymous Material per sync.
@@ -340,6 +436,41 @@ def reconcile_surface_slots(mesh: Any, grid: Any) -> Dict[int, int]:
     return slot_map
 
 
+def initialize_surface_entry(
+    mesh: Any,
+    entry: Any,
+    index: int,
+    name: str,
+    color: Tuple[float, float, float, float],
+) -> None:
+    """Initialize a Surface palette entry with an owned native surface material."""
+    entry.index = index
+    entry.name = name
+    entry.color = color
+    if hasattr(entry, "material_domain"):
+        entry.material_domain = "SURFACE"
+    entry.material_owned = True
+    entry.material = create_default_surface_material(mesh, entry, base_color=color)
+
+
+def initialize_volume_entry(
+    mesh: Any,
+    entry: Any,
+    index: int,
+    name: str,
+    color: Tuple[float, float, float, float],
+    density: float = 5.0,
+) -> None:
+    """Initialize a Volume palette entry with an owned native volume material."""
+    entry.index = index
+    entry.name = name
+    entry.color = color
+    if hasattr(entry, "material_domain"):
+        entry.material_domain = "VOLUME"
+    entry.material_owned = True
+    entry.material = create_default_volume_material(mesh, entry, volume_color=color, density=density)
+
+
 def initialize_palette_entry(
     mesh: Any,
     entry: Any,
@@ -348,14 +479,8 @@ def initialize_palette_entry(
     color: Tuple[float, float, float, float],
     domain: str = "SURFACE",
 ) -> None:
-    """Initialize a palette entry with given properties and an owned native material."""
-    entry.index = index
-    entry.name = name
-    entry.color = color
-    entry.material_domain = domain
-    entry.material_owned = True
-
-    if domain == "VOLUME":
-        entry.material = create_default_volume_material(mesh, entry, volume_color=color)
+    """Legacy helper: Initialize a palette entry with given properties and an owned native material."""
+    if str(domain).upper() == "VOLUME":
+        initialize_volume_entry(mesh, entry, index, name, color)
     else:
-        entry.material = create_default_surface_material(mesh, entry, base_color=color)
+        initialize_surface_entry(mesh, entry, index, name, color)

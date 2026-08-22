@@ -54,6 +54,8 @@ from .materials import (
 from .material_domains import (
     create_default_surface_material,
     create_default_volume_material,
+    get_palette,
+    find_entry,
     ensure_entry_material,
     copy_entry_material_for_mesh,
     assign_external_material,
@@ -66,6 +68,8 @@ from .material_domains import (
     used_surface_indices,
     used_volume_indices,
     reconcile_surface_slots,
+    initialize_surface_entry,
+    initialize_volume_entry,
     initialize_palette_entry,
 )
 from .volume_proxy import (
