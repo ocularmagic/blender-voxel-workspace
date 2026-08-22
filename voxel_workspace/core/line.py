@@ -2,15 +2,16 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Sequence
+from typing import Any, Sequence, Union
 import numpy as np
 
 from ..constants import VoxelCoord
 from .grid import VoxelGrid
+from .tagged_grid import TaggedVoxelGrid
 from .dda import trace_grid, intersect_work_plane
 
 
-def clamp_to_extent(grid: VoxelGrid, coord: VoxelCoord) -> VoxelCoord:
+def clamp_to_extent(grid: Union[VoxelGrid, TaggedVoxelGrid], coord: VoxelCoord) -> VoxelCoord:
     """Clamp a voxel coordinate to the nearest valid cell in the volume."""
     return tuple(
         max(grid.extent_min[axis], min(grid.extent_max_exclusive[axis] - 1, coord[axis]))
@@ -91,21 +92,24 @@ def line_3d(
 
 
 def compute_brush_target(
-    grid: VoxelGrid,
+    grid: Union[VoxelGrid, TaggedVoxelGrid],
     origin_grid: Sequence[float],
     direction_grid: Sequence[float],
     mode: str = "PLACE",
     max_distance: float = 1000.0,
 ) -> tuple[VoxelCoord | None, VoxelCoord | None, VoxelCoord | None]:
-    """Calculate the target voxel coordinate and hover face normal for Place/Erase.
+    """Calculate the target voxel coordinate and hover face normal for Place/Erase/Add Surface/Add Volume.
     
     Returns:
         (target_cell, hover_cell, hover_normal)
     """
     mode_upper = mode.upper()
+    is_add = mode_upper in ("PLACE", "ADD_SURFACE", "ADD_VOLUME", "SURFACE", "VOLUME")
+    is_erase = mode_upper in ("ERASE", "ERASE_VOXEL")
+
     hit = trace_grid(grid, origin_grid, direction_grid, max_distance=max_distance)
     if hit is not None:
-        if mode_upper == "PLACE":
+        if is_add:
             target = (
                 hit.cell[0] + hit.normal[0],
                 hit.cell[1] + hit.normal[1],
@@ -113,21 +117,16 @@ def compute_brush_target(
             )
             if not grid.in_extent(target):
                 target = clamp_to_extent(grid, target)
-            # Preview the face on the *new* voxel that will contact the hit
-            # surface. This is the opposite normal on the target cell.
             contact_normal = tuple(-component for component in hit.normal)
             return target, target, contact_normal
-        elif mode_upper == "ERASE":
+        elif is_erase:
             return hit.cell, hit.cell, hit.normal
 
-    # Miss: for PLACE, intersect with local Z=0 work plane
-    if mode_upper == "PLACE":
+    if is_add:
         cell = intersect_work_plane(origin_grid, direction_grid, axis=2, slice_index=0)
         if cell is not None:
             if not grid.in_extent(cell):
                 cell = clamp_to_extent(grid, cell)
-            # First-layer placement rests on the Z=0 work plane, so preview
-            # the future voxel's bottom face rather than its top face.
             return cell, cell, (0, 0, -1)
 
     return None, None, None
@@ -139,19 +138,13 @@ def world_ray_to_grid_ray(
     matrix_world: Any,
     voxel_size: float = 1.0,
 ) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
-    """Convert a world-space ray (origin and direction) to grid-space coordinates.
-    
-    matrix_world: 4x4 matrix (mathutils.Matrix or 4x4 array-like).
-    voxel_size: world-space scale of a single voxel.
-    """
+    """Convert a world-space ray (origin and direction) to grid-space coordinates."""
     if hasattr(matrix_world, "inverted"):
-        # Blender mathutils.Matrix
         inv_mat = matrix_world.inverted()
         import mathutils
         ow = mathutils.Vector((float(origin_world[0]), float(origin_world[1]), float(origin_world[2])))
         dw = mathutils.Vector((float(direction_world[0]), float(direction_world[1]), float(direction_world[2])))
         ol = inv_mat @ ow
-        # Direction transform: 3x3 rotation/scale inverted
         dl = inv_mat.to_3x3() @ dw
         dl_len = dl.length
         if dl_len > 1e-9:
@@ -161,7 +154,6 @@ def world_ray_to_grid_ray(
         dg = (float(dl.x), float(dl.y), float(dl.z))
         return og, dg
     else:
-        # NumPy or nested list 4x4
         mat = np.array(matrix_world, dtype=np.float64)
         inv_mat = np.linalg.inv(mat)
         ow = np.array([origin_world[0], origin_world[1], origin_world[2], 1.0], dtype=np.float64)

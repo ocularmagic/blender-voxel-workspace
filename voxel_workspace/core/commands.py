@@ -1,16 +1,17 @@
 from dataclasses import dataclass
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Union
 
 from ..constants import BRICK_SIZE, BrickCoord, VoxelCoord
 from .coords import split_coord
 from .grid import VoxelGrid
+from .tagged_grid import TaggedVoxelGrid, VoxelCell, VoxelDomain, CELL_EMPTY
 
 
 @dataclass
 class CellDelta:
     coord: VoxelCoord
-    before: int
-    after: int
+    before: Union[int, VoxelCell]
+    after: Union[int, VoxelCell]
 
 
 class VoxelStroke:
@@ -22,7 +23,7 @@ class VoxelStroke:
     def deltas(self) -> List[CellDelta]:
         return list(self._deltas.values())
 
-    def record(self, grid: VoxelGrid, coord: VoxelCoord, new_value: int) -> None:
+    def record(self, grid: Union[VoxelGrid, TaggedVoxelGrid], coord: VoxelCoord, new_value: Union[int, VoxelCell]) -> None:
         """Record a touch on a voxel coordinate.
         
         Captures the first 'before' value from the grid on first touch,
@@ -31,20 +32,41 @@ class VoxelStroke:
         if coord in self._deltas:
             self._deltas[coord].after = new_value
         else:
-            before_val = grid.get(coord)
+            if isinstance(grid, TaggedVoxelGrid):
+                before_val = grid.get_cell(coord)
+            else:
+                before_val = grid.get(coord)
             self._deltas[coord] = CellDelta(coord=coord, before=before_val, after=new_value)
 
     touch = record
 
-    def apply(self, grid: VoxelGrid) -> None:
+    def apply(self, grid: Union[VoxelGrid, TaggedVoxelGrid]) -> None:
         """Apply the stroke's final 'after' values to the grid."""
         for delta in self._deltas.values():
-            grid.set(delta.coord, delta.after)
+            if isinstance(grid, TaggedVoxelGrid):
+                if isinstance(delta.after, VoxelCell):
+                    grid.set_cell(delta.coord, delta.after.domain, delta.after.index)
+                else:
+                    grid.set_surface(delta.coord, int(delta.after))
+            else:
+                if isinstance(delta.after, VoxelCell):
+                    grid.set(delta.coord, delta.after.index)
+                else:
+                    grid.set(delta.coord, int(delta.after))
 
-    def revert(self, grid: VoxelGrid) -> None:
+    def revert(self, grid: Union[VoxelGrid, TaggedVoxelGrid]) -> None:
         """Revert the grid back to the stroke's original 'before' values."""
         for delta in self._deltas.values():
-            grid.set(delta.coord, delta.before)
+            if isinstance(grid, TaggedVoxelGrid):
+                if isinstance(delta.before, VoxelCell):
+                    grid.set_cell(delta.coord, delta.before.domain, delta.before.index)
+                else:
+                    grid.set_surface(delta.coord, int(delta.before))
+            else:
+                if isinstance(delta.before, VoxelCell):
+                    grid.set(delta.coord, delta.before.index)
+                else:
+                    grid.set(delta.coord, int(delta.before))
 
     def changed_bricks(self) -> Set[BrickCoord]:
         """Report impacted bricks plus face-neighbor bricks when a changed cell lies on a brick boundary."""
@@ -73,5 +95,3 @@ class VoxelStroke:
                 result.add((bx, by, bz + 1))
 
         return result
-
-
