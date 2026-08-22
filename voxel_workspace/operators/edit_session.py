@@ -95,10 +95,19 @@ class VOXEL_OT_start_volume(Operator):
         return _start_brush(context, self, 'ADD_VOLUME')
 
 
-class VOXEL_OT_start_place(VOXEL_OT_start_surface):
+class VOXEL_OT_start_place(Operator):
     """Compatibility alias for the former Place tool."""
     bl_idname = "voxel.start_place"
     bl_label = "Add Surface"
+    bl_description = "Compatibility alias for Add Surface"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context: Any) -> bool:
+        return context is not None and is_valid_voxel_object(context)
+
+    def execute(self, context: Any) -> set:
+        return _start_brush(context, self, 'ADD_SURFACE')
 
 
 class VOXEL_OT_start_erase(Operator):
