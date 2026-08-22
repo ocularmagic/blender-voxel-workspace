@@ -36,6 +36,10 @@ from .import_glb import (
     VOXEL_OT_import_glb,
     IMPORT_GLB_OPERATOR_CLASSES,
 )
+from .shelf import (
+    VOXEL_OT_shelf_activate,
+    SHELF_OPERATOR_CLASSES,
+)
 
 OPERATOR_CLASSES: List[Type] = [
     VOXEL_OT_create_volume,
@@ -43,6 +47,7 @@ OPERATOR_CLASSES: List[Type] = [
     *BRUSH_OPERATOR_CLASSES,
     *PALETTE_OPERATOR_CLASSES,
     *IMPORT_GLB_OPERATOR_CLASSES,
+    *SHELF_OPERATOR_CLASSES,
 ]
 
 __all__ = [
@@ -66,6 +71,7 @@ __all__ = [
     "VOXEL_OT_save_palette_preset",
     "VOXEL_OT_load_palette_preset",
     "VOXEL_OT_import_glb",
+    "VOXEL_OT_shelf_activate",
     "remap_volume_palette_indices",
     "get_used_palette_counts",
     "OPERATOR_CLASSES",

@@ -2,7 +2,7 @@
 
 Layout:
 * Voxel Palette -> native VIEW_3D N-panel category (same tab strip as Item/Tool/Voxel).
-* Bottom tools -> VIEW_3D asset shelf, the same bottom region Sculpting uses.
+* Edit tools -> VIEW_3D Asset Shelf thumbnails.
 * Voxel settings stay on the right N-panel Voxel tab.
 """
 from typing import Any
@@ -104,6 +104,7 @@ def draw_typed_palette(layout: Any, context: Any, *, compact: bool = False) -> N
             is_active=is_active,
             is_used=is_used,
             size=32,
+            material=getattr(entry_item, "material", None),
         )
         cell_box = grid_flow.column(align=True)
         row = cell_box.row(align=True)
@@ -188,101 +189,6 @@ class VOXEL_PT_palette_panel(Panel):
         layout = self.layout
         layout.label(text="Voxel Workspace", icon='MESH_CUBE')
         draw_typed_palette(layout, context, compact=True)
-
-
-# ---------------------------------------------------------------------------
-# Bottom tool bar (ASSET_SHELF region — Sculpting's bottom dock)
-# ---------------------------------------------------------------------------
-_TOOL_SPECS = (
-    ("ADD_SURFACE", "voxel.start_surface", "Add Surface", 'BRUSH_DATA'),
-    ("ADD_VOLUME", "voxel.start_volume", "Add Volume", 'MOD_FLUIDSIM'),
-    ("ERASE", "voxel.start_erase", "Erase Voxel", 'REMOVE'),
-)
-
-
-def draw_voxel_tool_header(self: Any, context: Any) -> None:
-    """Draw square voxel brush buttons on a real header region."""
-    if context is None or bpy is None or not _in_voxel_workspace(context):
-        return
-    layout = self.layout
-    sc_props = getattr(context.scene, "voxel_workspace", None)
-    active_tool = getattr(sc_props, "active_tool", "NONE") if sc_props else "NONE"
-
-    row = layout.row(align=True)
-    row.scale_y = 1.6
-    row.alignment = "CENTER"
-    for mode, op_id, _label, icon in _TOOL_SPECS:
-        sub = row.row(align=True)
-        sub.alert = active_tool == mode
-        sub.scale_x = 1.6
-        sub.operator(op_id, text="", icon=icon, emboss=True)
-
-    stop = row.row(align=True)
-    stop.alert = active_tool in {"ADD_SURFACE", "ADD_VOLUME", "ERASE", "PLACE"}
-    stop.scale_x = 1.6
-    stop.operator("voxel.stop_editing", text="", icon="CANCEL", emboss=True)
-
-    if sc_props is not None:
-        if active_tool == "ADD_VOLUME":
-            active_index = sc_props.active_volume_palette_index
-            domain = "Volume"
-        elif active_tool in {"ADD_SURFACE", "PLACE", "ERASE"}:
-            active_index = sc_props.active_surface_palette_index
-            domain = "Surface"
-        else:
-            active_index = "-"
-            domain = "None"
-        row.separator(factor=0.8)
-        row.label(text=f"{domain} [{active_index}]", icon="COLOR")
-
-
-class VOXEL_AST_workspace(bpy.types.AssetShelf if bpy is not None else object):
-    """Empty asset catalog so the bottom Sculpting-style shelf is not a brush browser."""
-    bl_idname = "VIEW3D_AST_voxel_workspace"
-    bl_space_type = "VIEW_3D"
-
-    @classmethod
-    def poll(cls, context: Any) -> bool:
-        return _in_voxel_workspace(context)
-
-    @classmethod
-    def asset_poll(cls, _asset: Any) -> bool:
-        return False
-
-
-class VOXEL_HT_workspace_tools(bpy.types.Header if bpy is not None else object):
-    """Square tool icons on the asset-shelf header (the shelf body does not draw panels)."""
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "ASSET_SHELF_HEADER"
-
-    def draw(self, context: Any) -> None:
-        draw_voxel_tool_header(self, context)
-
-
-def register_tool_header_draw() -> None:
-    """Also pin the buttons to the 3D tool header, flipped to the bottom of the view."""
-    if bpy is None:
-        return
-    header = getattr(bpy.types, "VIEW3D_HT_tool_header", None)
-    if header is None:
-        return
-    try:
-        header.remove(draw_voxel_tool_header)
-    except Exception:
-        pass
-    header.prepend(draw_voxel_tool_header)
-
-
-def unregister_tool_header_draw() -> None:
-    if bpy is None:
-        return
-    header = getattr(bpy.types, "VIEW3D_HT_tool_header", None)
-    if header is None:
-        return
-    try:
-        header.remove(draw_voxel_tool_header)
-    except Exception:
-        pass
 
 
 # ---------------------------------------------------------------------------
@@ -396,6 +302,4 @@ class VOXEL_PT_workspace_settings(Panel):
 PANEL_CLASSES = [
     VOXEL_PT_main_panel,
     VOXEL_PT_palette_panel,
-    VOXEL_HT_workspace_tools,
-    VOXEL_AST_workspace,
 ]

@@ -56,6 +56,10 @@ def _start_brush(context: Any, operator: Any, mode: str) -> set:
     stop_editing(context)
     start_editing(v_ctx.mesh_uuid, context)
     context.scene.voxel_workspace.active_tool = mode
+    if mode == "ADD_SURFACE":
+        context.scene.voxel_workspace.active_palette_tab = "SURFACE"
+    elif mode == "ADD_VOLUME":
+        context.scene.voxel_workspace.active_palette_tab = "VOLUME"
     try:
         bpy.ops.voxel.brush('INVOKE_DEFAULT', mode=mode)
     except Exception:

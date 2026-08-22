@@ -2,7 +2,7 @@
 
 Decisions the spikes can falsify. Amend the matching row when a verdict lands; do not leave the change only in a spike README.
 
-Shipping target: **Blender 5.x** Python API (Workbench / EEVEE Next / Cycles). 3.x addon prior art is stale until re-checked.
+Shipping target: **Blender 5.2.0 LTS** (`blender`). Python API is 5.x (Workbench / EEVEE Next / Cycles). Rows below that name 5.1 are historical spike evidence; re-check on 5.2 before treating them as current. 3.x addon prior art is stale until re-checked.
 
 Status: `untested` | `validated` | `partial` | `invalidated`
 

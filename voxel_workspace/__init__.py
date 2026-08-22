@@ -11,9 +11,9 @@ except ImportError:
 from .blender.properties import register_properties, unregister_properties
 from .blender.runtime import register_runtime, unregister_runtime
 from .operators import OPERATOR_CLASSES
-from .ui import PANEL_CLASSES, GIZMO_CLASSES
+from .ui import PANEL_CLASSES, GIZMO_CLASSES, SHELF_CLASSES
 from .ui.palette_icons import register_palette_icons, unregister_palette_icons
-from .ui.panels import register_tool_header_draw, unregister_tool_header_draw
+from .ui.shelf import ensure_tool_assets
 from .ui import workspace as _workspace_ui
 
 # Blender can retain an old extension submodule in ``sys.modules`` after an
@@ -30,6 +30,7 @@ unregister_voxel_workspace = _workspace_ui.unregister_voxel_workspace
 CLASSES: List[Type] = [
     *OPERATOR_CLASSES,
     *PANEL_CLASSES,
+    *SHELF_CLASSES,
     *GIZMO_CLASSES,
 ]
 
@@ -54,9 +55,12 @@ def register() -> None:
     for cls in CLASSES:
         bpy.utils.register_class(cls)
 
-    register_tool_header_draw()
+    try:
+        ensure_tool_assets()
+    except Exception:
+        pass
 
-    # Create/activate the custom Voxel Workspace (left palette + bottom tools).
+    # Create/activate the custom Voxel Workspace (Asset Shelf + right N-panel).
     # Safe no-op in background import contexts without a window.
     try:
         register_voxel_workspace()
@@ -78,11 +82,6 @@ def unregister() -> None:
     try:
         from .blender.gpu_preview import cleanup_gpu_preview
         cleanup_gpu_preview()
-    except Exception:
-        pass
-
-    try:
-        unregister_tool_header_draw()
     except Exception:
         pass
 

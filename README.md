@@ -1,6 +1,6 @@
 # Voxel Workspace
 
-Voxel Workspace is an installable Blender 5.1 extension for authoring independent bounded voxel volumes directly in Blender.
+Voxel Workspace is an installable Blender 5.2 extension for authoring independent bounded voxel volumes directly in Blender.
 
 ## Vertical-slice features
 
@@ -18,7 +18,7 @@ Layers, selection, symmetry, `.vox` import/export, custom Workspace layouts, and
 
 ## Requirements
 
-- Blender **5.1.0 or newer** (verified with Blender 5.1.2).
+- Blender **5.1.0 or newer**. Current shipping/test target is **Blender 5.2.0 LTS** (`fbe6228777e7`) at `blender`.
 - No pip dependencies at runtime; Blender supplies NumPy.
 
 ## Install

@@ -6,9 +6,8 @@ workspace therefore:
 
 * Keeps the 3D View N-panel on the RIGHT (Item / Tool / View / Voxel).
 * Adds Voxel Palette as another native UI category on that same strip.
-* Pins brush actions to the asset-shelf header and the 3D tool header
-  flipped to the bottom. The ASSET_SHELF body is C-drawn assets only and
-  cannot host Python operator buttons.
+* Pins brush actions to the bottom Asset Shelf (Sculpting-style thumbnails).
+* Leaves native Toolbar tools (Select / Cursor / …) on the left.
 """
 from typing import Any, Optional
 
@@ -22,7 +21,7 @@ except ImportError:
     persistent = lambda function: function
 
 WORKSPACE_NAME = "Voxel Workspace"
-_WORKSPACE_UUID = "voxel-workspace-layout-v5"
+_WORKSPACE_UUID = "voxel-workspace-layout-v7"
 _timer_registered = False
 
 
@@ -154,26 +153,27 @@ def _configure_workspace(workspace: "WorkSpace", window: Any) -> bool:
 
         main_space = main.spaces.active
         main_space.show_region_ui = True
-        main_space.show_region_toolbar = False
+        main_space.show_region_toolbar = True
         main_space.show_region_header = True
         if hasattr(main_space, "show_region_tool_header"):
             main_space.show_region_tool_header = True
-        _flip_region(window, main, "TOOL_HEADER", "BOTTOM")
+        _flip_region(window, main, "TOOLS", "LEFT")
+        _flip_region(window, main, "TOOL_HEADER", "TOP")
 
         if not bool(getattr(main_space, "show_region_asset_shelf", False)):
             _toggle_region(window, main, "ASSET_SHELF")
 
+        try:
+            from .shelf import ensure_tool_assets
+            ensure_tool_assets()
+        except Exception:
+            pass
+
         sidebar_right = _flip_region(window, main, "UI", "RIGHT")
 
         workspace["voxel_workspace_layout"] = _WORKSPACE_UUID
-        tool_header_bottom = any(
-            region.type == "TOOL_HEADER" and region.alignment == "BOTTOM" for region in main.regions
-        )
-        return (
-            sidebar_right
-            and bool(getattr(main_space, "show_region_asset_shelf", False))
-            and tool_header_bottom
-        )
+        shelf_on = bool(getattr(main_space, "show_region_asset_shelf", False))
+        return sidebar_right and shelf_on
     except Exception:
         return False
 
@@ -192,10 +192,7 @@ def _workspace_is_configured(workspace: "WorkSpace") -> bool:
             region.type == "UI" and region.alignment == "RIGHT" for region in main.regions
         )
         shelf_on = bool(getattr(space, "show_region_asset_shelf", False))
-        tool_header_bottom = any(
-            region.type == "TOOL_HEADER" and region.alignment == "BOTTOM" for region in main.regions
-        )
-        if sidebar_right and shelf_on and tool_header_bottom:
+        if sidebar_right and shelf_on:
             return True
     return False
 
@@ -213,7 +210,11 @@ def register_voxel_workspace() -> Optional["WorkSpace"]:
     if workspace is not None and _workspace_is_configured(workspace):
         return workspace
     if workspace is None:
-        template = bpy.data.workspaces.get("Layout")
+        template = (
+            bpy.data.workspaces.get("Modeling")
+            or bpy.data.workspaces.get("Sculpting")
+            or bpy.data.workspaces.get("Layout")
+        )
         if template is not None and window.workspace != template:
             window.workspace = template
             return None
