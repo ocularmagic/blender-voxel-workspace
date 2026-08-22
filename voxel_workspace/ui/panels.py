@@ -41,6 +41,11 @@ def draw_typed_palette(layout: Any, context: Any, *, compact: bool = False) -> N
         return
 
     v_ctx = resolve_volume_context(context)
+    if v_ctx is None:
+        active_objects = getattr(getattr(context, "view_layer", None), "objects", None)
+        active_object = getattr(active_objects, "active", None)
+        if active_object is not None:
+            v_ctx = resolve_volume_context(active_object)
     is_voxel = v_ctx is not None and v_ctx.mesh is not None
     mesh = v_ctx.mesh if is_voxel else None
     pal_tab = getattr(palette_props, "active_palette_tab", "SURFACE").upper()
@@ -167,9 +172,14 @@ def _in_voxel_workspace(context: Any) -> bool:
     return workspace is not None and workspace.name == "Voxel Workspace"
 
 
+def _sidebar_alignment(context: Any) -> str:
+    region = getattr(context, "region", None) if context is not None else None
+    return getattr(region, "alignment", "") if region is not None else ""
+
+
 class VOXEL_PT_palette_panel(Panel):
     """Surface / Volume palette in the left panel of Voxel Workspace."""
-    bl_space_type = 'VIEW_3D'
+    bl_space_type = 'TEXT_EDITOR'
     bl_region_type = 'UI'
     bl_category = 'Voxel Palette'
     bl_label = 'Voxel Palette'
@@ -307,7 +317,7 @@ def _any_occupied(brick: Any) -> bool:
 
 
 class VOXEL_PT_main_panel(Panel):
-    """Fallback N-panel for creation/import/settings outside the custom workspace."""
+    """Voxel N-panel on the default right sidebar."""
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'Voxel'
@@ -315,7 +325,7 @@ class VOXEL_PT_main_panel(Panel):
 
     @classmethod
     def poll(cls, context: Any) -> bool:
-        return not _in_voxel_workspace(context)
+        return not _in_voxel_workspace(context) or _sidebar_alignment(context) == 'RIGHT'
 
     def draw(self, context: Any) -> None:
         _draw_volume_settings(self.layout, context)
@@ -339,5 +349,4 @@ class VOXEL_PT_workspace_settings(Panel):
 PANEL_CLASSES = [
     VOXEL_PT_palette_panel,
     VOXEL_PT_main_panel,
-    VOXEL_PT_workspace_settings,
 ]

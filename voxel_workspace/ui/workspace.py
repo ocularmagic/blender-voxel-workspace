@@ -11,14 +11,42 @@ from typing import Any, Optional
 try:
     import bpy
     from bpy.types import WorkSpace
+    from bpy.app.handlers import persistent
 except ImportError:
     bpy = None
     WorkSpace = object
+    persistent = lambda function: function
 
 WORKSPACE_NAME = "Voxel Workspace"
-_WORKSPACE_UUID = "voxel-workspace-layout-v2"
-_header_registered = False
+_WORKSPACE_UUID = "voxel-workspace-layout-v3"
 _timer_registered = False
+
+
+@persistent
+def _voxel_workspace_load_post(_unused: Any) -> None:
+    """Recreate the file-local workspace after New/Open replaces datablocks."""
+    global _timer_registered
+    _timer_registered = False
+    schedule_voxel_workspace_registration()
+
+
+def _register_load_handler() -> None:
+    if bpy is None:
+        return
+    for handler in list(bpy.app.handlers.load_post):
+        if (
+            handler is not _voxel_workspace_load_post
+            and getattr(handler, "__module__", "") == __name__
+            and getattr(handler, "__name__", "") == "_voxel_workspace_load_post"
+        ):
+            bpy.app.handlers.load_post.remove(handler)
+    if _voxel_workspace_load_post not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_voxel_workspace_load_post)
+
+
+def _unregister_load_handler() -> None:
+    if bpy is not None and _voxel_workspace_load_post in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_voxel_workspace_load_post)
 
 
 def _find_workspace() -> Optional["WorkSpace"]:
@@ -66,89 +94,81 @@ def _configure_workspace(workspace: "WorkSpace", window: Any) -> bool:
     screen = window.screen
     try:
         view_areas = [area for area in screen.areas if area.type == 'VIEW_3D']
+        palette_areas = [area for area in screen.areas if area.type == 'TEXT_EDITOR' and area.x < 400]
         if not view_areas:
             return False
-        view = max(view_areas, key=lambda area: area.width * area.height)
-        space = view.spaces.active
-        space.show_region_ui = True
-        space.show_region_toolbar = False
-        space.show_region_tool_header = True
-        if hasattr(space, "show_region_asset_shelf"):
-            try:
-                space.show_region_asset_shelf = False
-            except Exception:
-                pass
-        palette_left = _flip_region(window, view, 'UI', 'LEFT')
-        tools_bottom = _flip_region(window, view, 'TOOL_HEADER', 'BOTTOM')
-        ui_region = next((region for region in view.regions if region.type == 'UI'), None)
-        if ui_region is not None:
-            try:
-                ui_region.active_panel_category = "Voxel Palette"
-            except Exception:
-                pass
+        if len(view_areas) == 1 and not palette_areas:
+            view = view_areas[0]
+            with bpy.context.temp_override(window=window, screen=screen, area=view):
+                bpy.ops.screen.area_split(direction='VERTICAL', factor=0.13)
+            return False  # New area dimensions/regions settle on the next UI tick.
 
+        if not palette_areas:
+            left = min(view_areas, key=lambda area: area.x)
+            left.type = 'TEXT_EDITOR'
+            return False  # Editor regions are recreated on the next UI tick.
+        else:
+            left = min(palette_areas, key=lambda area: area.x)
+        main = max((area for area in screen.areas if area.type == 'VIEW_3D'), key=lambda area: area.width * area.height)
+
+        left_space = left.spaces.active
+        left_space.show_region_ui = True
+        if hasattr(left_space, "show_region_toolbar"):
+            left_space.show_region_toolbar = False
+        if hasattr(left_space, "show_region_header"):
+            left_space.show_region_header = False
+        if hasattr(left_space, "show_region_tool_header"):
+            left_space.show_region_tool_header = False
+        palette_left = _flip_region(window, left, 'UI', 'LEFT')
+        left_ui = next((region for region in left.regions if region.type == 'UI'), None)
+        if left_ui is not None:
+            left_ui.active_panel_category = "Voxel Palette"
+
+        main_space = main.spaces.active
+        main_space.show_region_ui = True
+        main_space.show_region_toolbar = True
+        main_space.show_region_header = True
+        sidebar_right = _flip_region(window, main, 'UI', 'RIGHT')
+        main_ui = next((region for region in main.regions if region.type == 'UI'), None)
+        if main_ui is not None and main_ui.active_panel_category == 'Voxel Palette':
+            main_ui.active_panel_category = 'Item'
+
+        # Restore the Layout workspace's normal right-side Properties context.
         properties_areas = [area for area in screen.areas if area.type == 'PROPERTIES']
         if properties_areas:
-            # Layout-derived workspaces already place this editor at the right.
-            properties_areas[0].spaces.active.context = 'SCENE'
+            properties_areas[0].spaces.active.context = 'OBJECT'
         workspace["voxel_workspace_layout"] = _WORKSPACE_UUID
-        return palette_left and tools_bottom and bool(properties_areas)
+        return palette_left and sidebar_right
     except Exception:
         return False
 
 
 def _workspace_is_configured(workspace: "WorkSpace") -> bool:
     for screen in workspace.screens:
-        has_settings = any(
-            area.type == 'PROPERTIES' and area.spaces.active.context == 'SCENE'
-            for area in screen.areas
+        views = [area for area in screen.areas if area.type == 'VIEW_3D']
+        palettes = [area for area in screen.areas if area.type == 'TEXT_EDITOR' and area.x < 400]
+        if not views or not palettes:
+            continue
+        left = min(palettes, key=lambda area: area.x)
+        main = max(views, key=lambda area: area.width * area.height)
+        palette_left = bool(left.spaces.active.show_region_ui) and any(
+            region.type == 'UI' and region.alignment == 'LEFT'
+            and region.active_panel_category == 'Voxel Palette'
+            for region in left.regions
         )
-        for area in screen.areas:
-            if area.type != 'VIEW_3D':
-                continue
-            space = area.spaces.active
-            palette_left = bool(space.show_region_ui) and any(
-                region.type == 'UI' and region.alignment == 'LEFT' for region in area.regions
-            )
-            palette_active = any(
-                region.type == 'UI' and region.active_panel_category == 'Voxel Palette'
-                for region in area.regions
-            )
-            tools_bottom = bool(space.show_region_tool_header) and any(
-                region.type == 'TOOL_HEADER' and region.alignment == 'BOTTOM'
-                for region in area.regions
-            )
-            if palette_left and palette_active and tools_bottom and has_settings:
-                return True
+        sidebar_right = bool(main.spaces.active.show_region_ui) and any(
+            region.type == 'UI' and region.alignment == 'RIGHT' for region in main.regions
+        )
+        if palette_left and sidebar_right:
+            return True
     return False
-
-
-def _register_tool_header() -> None:
-    global _header_registered
-    if bpy is None or _header_registered:
-        return
-    from .panels import draw_voxel_tool_header
-    bpy.types.VIEW3D_HT_tool_header.prepend(draw_voxel_tool_header)
-    _header_registered = True
-
-
-def _unregister_tool_header() -> None:
-    global _header_registered
-    if bpy is None or not _header_registered:
-        return
-    from .panels import draw_voxel_tool_header
-    try:
-        bpy.types.VIEW3D_HT_tool_header.remove(draw_voxel_tool_header)
-    except Exception:
-        pass
-    _header_registered = False
 
 
 def register_voxel_workspace() -> Optional["WorkSpace"]:
     """Create/reuse and configure the top-level Voxel Workspace tab."""
     if bpy is None:
         return None
-    _register_tool_header()
+    _register_load_handler()
     window = _window()
     if window is None:
         return None
@@ -157,6 +177,10 @@ def register_voxel_workspace() -> Optional["WorkSpace"]:
     if workspace is not None and _workspace_is_configured(workspace):
         return workspace
     if workspace is None:
+        template = bpy.data.workspaces.get('Layout')
+        if template is not None and window.workspace != template:
+            window.workspace = template
+            return None  # Duplicate the predictable Layout screen next UI tick.
         before = set(bpy.data.workspaces.keys())
         with bpy.context.temp_override(window=window, screen=window.screen):
             result = bpy.ops.workspace.duplicate()
@@ -201,4 +225,4 @@ def unregister_voxel_workspace() -> None:
     if bpy is not None and _timer_registered and bpy.app.timers.is_registered(_deferred_register):
         bpy.app.timers.unregister(_deferred_register)
     _timer_registered = False
-    _unregister_tool_header()
+    _unregister_load_handler()

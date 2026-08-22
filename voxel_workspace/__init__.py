@@ -11,7 +11,7 @@ except ImportError:
 from .blender.properties import register_properties, unregister_properties
 from .blender.runtime import register_runtime, unregister_runtime
 from .operators import OPERATOR_CLASSES
-from .ui import PANEL_CLASSES
+from .ui import PANEL_CLASSES, GIZMO_CLASSES
 from .ui.palette_icons import register_palette_icons, unregister_palette_icons
 from .ui import workspace as _workspace_ui
 
@@ -29,6 +29,7 @@ unregister_voxel_workspace = _workspace_ui.unregister_voxel_workspace
 CLASSES: List[Type] = [
     *OPERATOR_CLASSES,
     *PANEL_CLASSES,
+    *GIZMO_CLASSES,
 ]
 
 _registered: bool = False
