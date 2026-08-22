@@ -12,6 +12,11 @@ from .blender.runtime import register_runtime, unregister_runtime
 from .operators import OPERATOR_CLASSES
 from .ui import PANEL_CLASSES
 from .ui.palette_icons import register_palette_icons, unregister_palette_icons
+from .ui.workspace import (
+    register_voxel_workspace,
+    schedule_voxel_workspace_registration,
+    unregister_voxel_workspace,
+)
 
 # Central ordered registry of Blender types
 CLASSES: List[Type] = [
@@ -40,6 +45,14 @@ def register() -> None:
     for cls in CLASSES:
         bpy.utils.register_class(cls)
 
+    # Create/activate the custom Voxel Workspace (left palette + bottom tools).
+    # Safe no-op in background import contexts without a window.
+    try:
+        register_voxel_workspace()
+        schedule_voxel_workspace_registration()
+    except Exception:
+        schedule_voxel_workspace_registration()
+
     _registered = True
 
 
@@ -59,6 +72,13 @@ def unregister() -> None:
 
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)
+
+    # Leave the Voxel Workspace layout in place on unregister; removing a
+    # workspace is unsafe from Python and would destroy the user's layout.
+    try:
+        unregister_voxel_workspace()
+    except Exception:
+        pass
 
     unregister_runtime()
     unregister_properties()
