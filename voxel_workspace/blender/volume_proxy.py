@@ -193,22 +193,48 @@ def rebuild_proxy_geometry(
     else:
         remesh_targets = set(grid.bricks.keys()) | set(proxy_buffers.keys())
 
+    is_tagged = hasattr(grid, "read_index_apron")
+
     for coord in remesh_targets:
         brick = grid.bricks.get(coord)
-        if brick is not None and np.any(brick == palette_index):
-            apron = grid.read_apron(coord)
-            origin = (
-                float(coord[0] * s) * v_size,
-                float(coord[1] * s) * v_size,
-                float(coord[2] * s) * v_size,
-            )
-            buf = mesh_greedy(
-                apron,
-                origin=origin,
-                voxel_size=v_size,
-                brick=brick,
-                only_index=palette_index,
-            )
+        has_val = False
+        if brick is not None:
+            if is_tagged:
+                has_val = np.any((brick.domains == 2) & (brick.indices == palette_index))
+            else:
+                has_val = np.any(brick == palette_index)
+        if has_val:
+            if is_tagged:
+                from ..core.tagged_grid import VoxelDomain
+                apron = grid.read_index_apron(
+                    coord,
+                    domain_filter=VoxelDomain.VOLUME,
+                    only_index=palette_index,
+                )
+                buf = mesh_greedy(
+                    apron,
+                    origin=(
+                        float(coord[0] * s) * v_size,
+                        float(coord[1] * s) * v_size,
+                        float(coord[2] * s) * v_size,
+                    ),
+                    voxel_size=v_size,
+                    only_index=palette_index,
+                )
+            else:
+                apron = grid.read_apron(coord)
+                origin = (
+                    float(coord[0] * s) * v_size,
+                    float(coord[1] * s) * v_size,
+                    float(coord[2] * s) * v_size,
+                )
+                buf = mesh_greedy(
+                    apron,
+                    origin=origin,
+                    voxel_size=v_size,
+                    brick=brick,
+                    only_index=palette_index,
+                )
             if buf.quad_count > 0:
                 proxy_buffers[coord] = buf
             else:

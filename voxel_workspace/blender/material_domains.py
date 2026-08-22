@@ -374,9 +374,7 @@ def used_volume_indices(mesh: Any, grid: Any) -> List[int]:
     if grid is None:
         return []
     if hasattr(grid, "iter_used_indices"):
-        tagged_vol = grid.iter_used_indices(VoxelDomain.VOLUME)
-        if tagged_vol:
-            return sorted(list(tagged_vol))
+        return sorted(list(grid.iter_used_indices(VoxelDomain.VOLUME)))
 
     used = used_palette_indices(grid)
     if not used or mesh is None or not hasattr(mesh, "voxel_workspace"):

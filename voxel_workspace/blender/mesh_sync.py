@@ -78,27 +78,42 @@ def sync_volume_mesh(
     # Remesh target bricks
     s = grid.brick_size
     v_size = voxel_size
-    
-    # Exclude VOLUME indices from the primary surface mesh
+
+    is_tagged = hasattr(grid, "read_index_apron")
+
+    # Exclude VOLUME indices from the primary surface mesh (for legacy grid or fallback)
     from .material_domains import used_volume_indices
-    vol_indices = used_volume_indices(mesh, grid) if hasattr(mesh, "voxel_workspace") else []
+    vol_indices = used_volume_indices(mesh, grid) if (not is_tagged and hasattr(mesh, "voxel_workspace")) else []
 
     for coord in remesh_targets:
         brick = grid.bricks.get(coord)
-        if brick is not None and np.any(brick):
-            apron = grid.read_apron(coord)
-            origin = (
-                float(coord[0] * s) * v_size,
-                float(coord[1] * s) * v_size,
-                float(coord[2] * s) * v_size,
-            )
-            buf = mesher(
-                apron,
-                origin=origin,
-                voxel_size=v_size,
-                brick=brick,
-                exclude_indices=vol_indices if vol_indices else None,
-            )
+        if brick is not None and (not getattr(brick, "is_empty", lambda: not np.any(brick))()):
+            if is_tagged:
+                from ..core.tagged_grid import VoxelDomain
+                apron = grid.read_index_apron(coord, domain_filter=VoxelDomain.SURFACE)
+                buf = mesher(
+                    apron,
+                    origin=(
+                        float(coord[0] * s) * v_size,
+                        float(coord[1] * s) * v_size,
+                        float(coord[2] * s) * v_size,
+                    ),
+                    voxel_size=v_size,
+                )
+            else:
+                apron = grid.read_apron(coord)
+                origin = (
+                    float(coord[0] * s) * v_size,
+                    float(coord[1] * s) * v_size,
+                    float(coord[2] * s) * v_size,
+                )
+                buf = mesher(
+                    apron,
+                    origin=origin,
+                    voxel_size=v_size,
+                    brick=brick,
+                    exclude_indices=vol_indices if vol_indices else None,
+                )
             if buf.quad_count > 0:
                 cpu_buffers[coord] = buf
             else:
