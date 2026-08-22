@@ -11,7 +11,6 @@ from .panels import (
 from .palette_icons import register_palette_icons, unregister_palette_icons
 from .workspace import (
     register_voxel_workspace,
-    schedule_voxel_workspace_registration,
     unregister_voxel_workspace,
 )
 
@@ -25,6 +24,5 @@ __all__ = [
     "register_palette_icons",
     "unregister_palette_icons",
     "register_voxel_workspace",
-    "schedule_voxel_workspace_registration",
     "unregister_voxel_workspace",
 ]

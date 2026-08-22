@@ -1,4 +1,5 @@
 """Voxel Workspace - Author bounded voxel volumes directly in Blender."""
+import importlib
 from typing import List, Type
 
 
@@ -12,11 +13,17 @@ from .blender.runtime import register_runtime, unregister_runtime
 from .operators import OPERATOR_CLASSES
 from .ui import PANEL_CLASSES
 from .ui.palette_icons import register_palette_icons, unregister_palette_icons
-from .ui.workspace import (
-    register_voxel_workspace,
-    schedule_voxel_workspace_registration,
-    unregister_voxel_workspace,
-)
+from .ui import workspace as _workspace_ui
+
+# Blender can retain an old extension submodule in ``sys.modules`` after an
+# in-session reinstall. Reload only that stale module before binding its API so
+# enabling the freshly copied extension cannot fail on a newly added symbol.
+if not hasattr(_workspace_ui, "schedule_voxel_workspace_registration"):
+    _workspace_ui = importlib.reload(_workspace_ui)
+
+register_voxel_workspace = _workspace_ui.register_voxel_workspace
+schedule_voxel_workspace_registration = _workspace_ui.schedule_voxel_workspace_registration
+unregister_voxel_workspace = _workspace_ui.unregister_voxel_workspace
 
 # Central ordered registry of Blender types
 CLASSES: List[Type] = [
