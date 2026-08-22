@@ -22,6 +22,7 @@ class VoxelVolumeEntry:
     uuid: str
     grid: VoxelGrid
     cpu_buffers: Dict[BrickCoord, MeshBuffers] = field(default_factory=dict)
+    surface_preview_buffers: Dict[BrickCoord, MeshBuffers] = field(default_factory=dict)
     gpu_batches: Dict[BrickCoord, Any] = field(default_factory=dict)
     gpu_edge_batches: Dict[BrickCoord, Any] = field(default_factory=dict)
     volume_preview_buffers: Dict[BrickCoord, MeshBuffers] = field(default_factory=dict)

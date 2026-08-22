@@ -144,7 +144,7 @@ def recolor_preview_batches(entry: Any, palette_type: str) -> None:
         buffers = entry.volume_preview_buffers
         batches = entry.volume_gpu_batches
     else:
-        buffers = entry.cpu_buffers
+        buffers = entry.surface_preview_buffers
         batches = entry.gpu_batches
     lut = get_palette_rgba_lut(entry, domain)
     batches.clear()
@@ -461,7 +461,7 @@ def update_volume_gpu_preview(
     from ..core.tagged_grid import TaggedVoxelGrid, VoxelDomain
 
     grid = entry.grid
-    surface_buffers = entry.cpu_buffers
+    surface_buffers = entry.surface_preview_buffers
     surface_batches = entry.gpu_batches
     surface_edges = entry.gpu_edge_batches
     volume_buffers = entry.volume_preview_buffers
@@ -494,7 +494,10 @@ def update_volume_gpu_preview(
             return
         if isinstance(grid, TaggedVoxelGrid):
             core = np.where(brick.domains == int(domain), brick.indices, 0).astype(np.uint8)
-            apron = grid.read_index_apron(coord, domain_filter=domain)
+            # Editing preview treats every tagged voxel as occupied for neighbor
+            # culling. This omits coplanar cross-domain contact faces while the
+            # committed Surface mesh and closed Volume proxies remain unchanged.
+            apron = grid.read_index_apron(coord)
         else:
             if domain == VoxelDomain.VOLUME:
                 core = np.zeros((s, s, s), dtype=np.uint8)
@@ -540,6 +543,8 @@ def clear_volume_gpu_preview(entry: Any) -> None:
         entry.gpu_edge_batches.clear()
     if hasattr(entry, "cpu_buffers"):
         entry.cpu_buffers.clear()
+    if hasattr(entry, "surface_preview_buffers"):
+        entry.surface_preview_buffers.clear()
     if hasattr(entry, "volume_preview_buffers"):
         entry.volume_preview_buffers.clear()
     if hasattr(entry, "volume_gpu_batches"):
