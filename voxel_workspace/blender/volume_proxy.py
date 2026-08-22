@@ -18,49 +18,87 @@ from .material_domains import used_volume_indices, ensure_entry_material
 
 PROXY_OBJECT_FLAG = "is_voxel_volume_proxy"
 PROXY_SOURCE_UUID_FLAG = "source_mesh_uuid"
+PROXY_ROOT_INSTANCE_UUID_FLAG = "voxel_root_instance_uuid"
 PROXY_PALETTE_INDEX_FLAG = "palette_index"
 
 
+def iter_roots_for_mesh(mesh: Any) -> List[Any]:
+    """Find all canonical Voxel Root objects referencing the given mesh."""
+    from .object_graph import iter_roots_for_mesh as _iter_roots
+    return _iter_roots(mesh)
+
+
 def iter_primary_objects_for_mesh(mesh: Any) -> List[Any]:
-    """Find all Blender objects in the scene referencing the given mesh."""
+    """Find all canonical root objects (or fallback legacy objects) for the given mesh."""
+    roots = iter_roots_for_mesh(mesh)
+    if roots:
+        return roots
     if bpy is None or mesh is None:
         return []
-    primary_objs = []
+    legacy_objs = []
     for obj in bpy.data.objects:
         if (
             obj.type == 'MESH'
             and obj.data == mesh
             and not obj.get(PROXY_OBJECT_FLAG, False)
         ):
-            primary_objs.append(obj)
-    return primary_objs
+            legacy_objs.append(obj)
+    return legacy_objs
 
 
-def find_proxy(parent_obj: Any, palette_index: int) -> Optional[Any]:
-    """Find an existing volume proxy child object for the given parent object and palette index."""
-    if parent_obj is None:
+def find_proxy(root_or_parent: Any, palette_index: int) -> Optional[Any]:
+    """Find an existing volume proxy child object for the given root and palette index."""
+    if root_or_parent is None:
         return None
-    source_uuid = ""
-    if getattr(parent_obj, "data", None) is not None and hasattr(parent_obj.data, "voxel_workspace"):
-        source_uuid = parent_obj.data.voxel_workspace.uuid
-    for child in parent_obj.children:
+
+    # Get owning root instance UUID and authoritative mesh UUID
+    from .object_graph import is_voxel_root, resolve_voxel_root, resolve_authoritative_mesh
+    root = root_or_parent if is_voxel_root(root_or_parent) else resolve_voxel_root(root_or_parent)
+    mesh = resolve_authoritative_mesh(root_or_parent)
+    source_uuid = getattr(mesh.voxel_workspace, "uuid", "") if (mesh and hasattr(mesh, "voxel_workspace")) else ""
+    root_uuid = root.get("voxel_instance_uuid", "") if (root and hasattr(root, "get")) else ""
+
+    # Inspect children of root (or fallback to root_or_parent)
+    parent_target = root if root is not None else root_or_parent
+    for child in getattr(parent_target, "children", []):
         if (
             child.get(PROXY_OBJECT_FLAG, False)
             and child.get(PROXY_PALETTE_INDEX_FLAG, -1) == palette_index
-            and child.get(PROXY_SOURCE_UUID_FLAG, "") == source_uuid
         ):
+            child_mesh_uuid = child.get(PROXY_SOURCE_UUID_FLAG, "")
+            child_root_uuid = child.get(PROXY_ROOT_INSTANCE_UUID_FLAG, "")
+            # Validate source mesh UUID and root instance UUID if known
+            if source_uuid and child_mesh_uuid and child_mesh_uuid != source_uuid:
+                continue
+            if root_uuid and child_root_uuid and child_root_uuid != root_uuid:
+                continue
             return child
+
+    # Also check fallback if parent_target was a legacy surface mesh and children are attached there
+    if parent_target != root_or_parent:
+        for child in getattr(root_or_parent, "children", []):
+            if (
+                child.get(PROXY_OBJECT_FLAG, False)
+                and child.get(PROXY_PALETTE_INDEX_FLAG, -1) == palette_index
+            ):
+                return child
+
     return None
 
 
-def ensure_proxy(parent_obj: Any, mesh: Any, entry_item: Any) -> Any:
-    """Ensure a child proxy object exists for parent_obj and the specified volume palette entry."""
-    if bpy is None or parent_obj is None or entry_item is None:
+def ensure_proxy(root_or_parent: Any, mesh: Any, entry_item: Any) -> Any:
+    """Ensure a child proxy object exists under Voxel Root for the specified volume palette entry."""
+    if bpy is None or root_or_parent is None or entry_item is None:
         return None
+
+    from .object_graph import is_voxel_root, resolve_voxel_root
+    root = root_or_parent if is_voxel_root(root_or_parent) else resolve_voxel_root(root_or_parent)
+    parent_obj = root if root is not None else root_or_parent
 
     pal_idx = int(entry_item.index)
     proxy_obj = find_proxy(parent_obj, pal_idx)
-    mesh_uuid = getattr(mesh.voxel_workspace, "uuid", "")
+    mesh_uuid = getattr(mesh.voxel_workspace, "uuid", "") if (mesh and hasattr(mesh, "voxel_workspace")) else ""
+    root_uuid = parent_obj.get("voxel_instance_uuid", "") if hasattr(parent_obj, "get") else ""
 
     if proxy_obj is None:
         proxy_mesh = bpy.data.meshes.new(name=f"VoxelVolumeProxyMesh_{pal_idx}")
@@ -75,7 +113,7 @@ def ensure_proxy(parent_obj: Any, mesh: Any, entry_item: Any) -> Any:
         if target_col:
             target_col.objects.link(proxy_obj)
 
-        # Parent to primary object with identity local transform
+        # Parent to Voxel Root with identity local transform
         proxy_obj.parent = parent_obj
         proxy_obj.matrix_local = np.eye(4)
         
@@ -85,15 +123,25 @@ def ensure_proxy(parent_obj: Any, mesh: Any, entry_item: Any) -> Any:
         proxy_obj.hide_select = True
         proxy_obj[PROXY_OBJECT_FLAG] = True
         proxy_obj[PROXY_SOURCE_UUID_FLAG] = mesh_uuid
+        proxy_obj[PROXY_ROOT_INSTANCE_UUID_FLAG] = root_uuid
         proxy_obj[PROXY_PALETTE_INDEX_FLAG] = pal_idx
+        proxy_obj["voxel_render_role"] = "VOLUME"
+    else:
+        # Reparent to root if parent was not root
+        if proxy_obj.parent != parent_obj:
+            proxy_obj.parent = parent_obj
+            proxy_obj.matrix_local = np.eye(4)
 
     # Repair metadata/display properties on existing proxies too.
     proxy_obj[PROXY_OBJECT_FLAG] = True
     proxy_obj[PROXY_SOURCE_UUID_FLAG] = mesh_uuid
+    proxy_obj[PROXY_ROOT_INSTANCE_UUID_FLAG] = root_uuid
     proxy_obj[PROXY_PALETTE_INDEX_FLAG] = pal_idx
+    proxy_obj["voxel_render_role"] = "VOLUME"
     proxy_obj.display_type = 'WIRE'
     proxy_obj.show_wire = True
     proxy_obj.hide_select = True
+    proxy_obj.matrix_local = np.eye(4)
 
     # Ensure proxy material slot 0
     mat = ensure_entry_material(mesh, entry_item)
@@ -207,11 +255,11 @@ def rebuild_proxy_geometry(
     proxy_mesh.update()
 
 
-def remove_proxy(parent_obj: Any, palette_index: int) -> bool:
-    """Remove a proxy child object for the given parent and palette index."""
-    if parent_obj is None:
+def remove_proxy(root_or_parent: Any, palette_index: int) -> bool:
+    """Remove a proxy child object for the given root/parent and palette index."""
+    if root_or_parent is None:
         return False
-    proxy = find_proxy(parent_obj, palette_index)
+    proxy = find_proxy(root_or_parent, palette_index)
     if proxy is not None:
         mesh = proxy.data
         bpy.data.objects.remove(proxy, do_unlink=True)
@@ -222,30 +270,39 @@ def remove_proxy(parent_obj: Any, palette_index: int) -> bool:
 
 
 def reconcile_volume_proxies(
-    parent_obj: Any,
+    root_or_parent: Any,
     mesh: Any,
     grid: VoxelGrid,
     volume_entry: Optional[Any] = None,
     dirty_bricks: Optional[Set[BrickCoord]] = None,
     voxel_size: float = 1.0,
 ) -> None:
-    """Reconcile all volume proxies for a single primary object instance."""
-    if parent_obj is None or mesh is None or grid is None:
+    """Reconcile all volume proxies under a single Voxel Root instance."""
+    if root_or_parent is None or mesh is None or grid is None:
         return
+
+    from .object_graph import is_voxel_root, resolve_voxel_root
+    root = root_or_parent if is_voxel_root(root_or_parent) else resolve_voxel_root(root_or_parent)
+    parent_obj = root if root is not None else root_or_parent
 
     props = mesh.voxel_workspace
     mesh_uuid = props.uuid
-    for child in list(parent_obj.children):
-        if child.get(PROXY_OBJECT_FLAG, False) and child.get(PROXY_SOURCE_UUID_FLAG, "") != mesh_uuid:
-            child_mesh = child.data
-            bpy.data.objects.remove(child, do_unlink=True)
-            if child_mesh is not None and child_mesh.users == 0:
-                bpy.data.meshes.remove(child_mesh)
+    root_uuid = parent_obj.get("voxel_instance_uuid", "") if hasattr(parent_obj, "get") else ""
+
+    for child in list(getattr(parent_obj, "children", [])):
+        if child.get(PROXY_OBJECT_FLAG, False):
+            child_mesh_uuid = child.get(PROXY_SOURCE_UUID_FLAG, "")
+            child_root_uuid = child.get(PROXY_ROOT_INSTANCE_UUID_FLAG, "")
+            if (mesh_uuid and child_mesh_uuid and child_mesh_uuid != mesh_uuid) or (root_uuid and child_root_uuid and child_root_uuid != root_uuid):
+                child_mesh = child.data
+                bpy.data.objects.remove(child, do_unlink=True)
+                if child_mesh is not None and child_mesh.users == 0:
+                    bpy.data.meshes.remove(child_mesh)
 
     vol_indices = used_volume_indices(mesh, grid)
     current_proxies = {
         c.get(PROXY_PALETTE_INDEX_FLAG, -1): c
-        for c in parent_obj.children
+        for c in getattr(parent_obj, "children", [])
         if c.get(PROXY_OBJECT_FLAG, False)
     }
 
@@ -273,18 +330,21 @@ def reconcile_volume_proxies(
         )
 
 
-def reconcile_all_instances(
+def reconcile_all_root_instances(
     mesh: Any,
     grid: VoxelGrid,
     volume_entry: Optional[Any] = None,
     dirty_bricks: Optional[Set[BrickCoord]] = None,
     voxel_size: float = 1.0,
 ) -> None:
-    """Reconcile volume proxies across all primary Object instances sharing the given mesh."""
-    primary_objs = iter_primary_objects_for_mesh(mesh)
-    for parent_obj in primary_objs:
+    """Reconcile volume proxies across all Voxel Root instances sharing the given mesh."""
+    root_objs = iter_roots_for_mesh(mesh)
+    if not root_objs:
+        # Fallback to primary objects if no root found
+        root_objs = iter_primary_objects_for_mesh(mesh)
+    for root in root_objs:
         reconcile_volume_proxies(
-            parent_obj,
+            root,
             mesh,
             grid,
             volume_entry=volume_entry,
@@ -293,8 +353,11 @@ def reconcile_all_instances(
         )
 
 
+reconcile_all_instances = reconcile_all_root_instances
+
+
 def cleanup_stale_proxies() -> List[str]:
-    """Clean up orphan volume proxy objects whose parent or source mesh no longer exists."""
+    """Clean up orphan volume proxy objects whose root or source mesh no longer exists."""
     if bpy is None or not hasattr(bpy, "data") or not hasattr(bpy.data, "objects"):
         return []
 
@@ -303,15 +366,18 @@ def cleanup_stale_proxies() -> List[str]:
         if hasattr(m, "voxel_workspace") and m.voxel_workspace.uuid:
             active_mesh_uuids.add(m.voxel_workspace.uuid)
 
+    from .object_graph import is_voxel_root, resolve_authoritative_mesh
+
     removed = []
     for obj in list(bpy.data.objects):
         if obj.get(PROXY_OBJECT_FLAG, False):
             source_uuid = obj.get(PROXY_SOURCE_UUID_FLAG, "")
             parent = obj.parent
-            parent_uuid = ""
-            if parent is not None and getattr(parent, "data", None) is not None and hasattr(parent.data, "voxel_workspace"):
-                parent_uuid = parent.data.voxel_workspace.uuid
-            if parent is None or source_uuid not in active_mesh_uuids or parent_uuid != source_uuid:
+            parent_is_valid_root = parent is not None and is_voxel_root(parent)
+            parent_mesh = resolve_authoritative_mesh(parent) if parent else None
+            parent_mesh_uuid = getattr(parent_mesh.voxel_workspace, "uuid", "") if (parent_mesh and hasattr(parent_mesh, "voxel_workspace")) else ""
+
+            if parent is None or source_uuid not in active_mesh_uuids or (parent_mesh_uuid and parent_mesh_uuid != source_uuid):
                 m = obj.data
                 bpy.data.objects.remove(obj, do_unlink=True)
                 if m and m.users == 0:

@@ -15,6 +15,7 @@ except ImportError:
 from ..blender.volume_proxy import (
     PROXY_OBJECT_FLAG,
     PROXY_SOURCE_UUID_FLAG,
+    PROXY_ROOT_INSTANCE_UUID_FLAG,
     PROXY_PALETTE_INDEX_FLAG,
 )
 
@@ -117,8 +118,10 @@ def resolve_voxel_root(obj_or_context: Any) -> Optional[Any]:
     if getattr(obj, "parent", None) is not None and is_voxel_root(obj.parent):
         return obj.parent
 
-    # 3. If it's a Surface child object that has a root_instance_uuid tag
+    # 3. If it's a Surface or Volume child object that has a root_instance_uuid tag
     root_uuid = obj.get(VOXEL_ROOT_INSTANCE_UUID_FLAG, "") if hasattr(obj, "get") else ""
+    if not root_uuid and is_volume_render_object(obj):
+        root_uuid = obj.get(PROXY_ROOT_INSTANCE_UUID_FLAG, "") if hasattr(obj, "get") else ""
     if root_uuid and bpy is not None:
         for scene_obj in bpy.data.objects:
             if is_voxel_root(scene_obj) and scene_obj.get(VOXEL_INSTANCE_UUID_FLAG, "") == root_uuid:
@@ -151,12 +154,12 @@ def resolve_surface_object(obj_or_root: Any) -> Optional[Any]:
                 return surf
 
         # Check direct children
-        for child in getattr(obj, "children", []):
+        for child in getattr(obj_or_root, "children", []):
             if is_surface_render_object(child):
                 return child
 
         # Check matching root instance UUID across objects
-        root_uuid = obj.get(VOXEL_INSTANCE_UUID_FLAG, "") if hasattr(obj, "get") else ""
+        root_uuid = obj_or_root.get(VOXEL_INSTANCE_UUID_FLAG, "") if hasattr(obj_or_root, "get") else ""
         if root_uuid and bpy is not None:
             for scene_obj in bpy.data.objects:
                 if scene_obj.get(VOXEL_ROOT_INSTANCE_UUID_FLAG, "") == root_uuid and is_surface_render_object(scene_obj):
@@ -170,6 +173,18 @@ def resolve_surface_object(obj_or_root: Any) -> Optional[Any]:
                 return resolve_surface_object(parent)
             if is_surface_render_object(parent):
                 return parent
+        # If proxy was orphaned or parent not set, look up via PROXY_ROOT_INSTANCE_UUID_FLAG or PROXY_SOURCE_UUID_FLAG
+        root_uuid = obj.get(PROXY_ROOT_INSTANCE_UUID_FLAG, "") if hasattr(obj, "get") else ""
+        if root_uuid and bpy is not None:
+            for scene_obj in bpy.data.objects:
+                if is_voxel_root(scene_obj) and scene_obj.get(VOXEL_INSTANCE_UUID_FLAG, "") == root_uuid:
+                    return resolve_surface_object(scene_obj)
+        source_mesh_uuid = obj.get(PROXY_SOURCE_UUID_FLAG, "") if hasattr(obj, "get") else ""
+        if source_mesh_uuid and bpy is not None:
+            for scene_obj in bpy.data.objects:
+                if is_surface_render_object(scene_obj) and getattr(scene_obj.data, "voxel_workspace", None):
+                    if scene_obj.data.voxel_workspace.uuid == source_mesh_uuid:
+                        return scene_obj
 
     return None
 
@@ -327,6 +342,23 @@ def repair_voxel_hierarchy(root_or_surface: Any) -> RepairReport:
             surface_obj[VOXEL_RENDER_ROLE_FLAG] = "SURFACE"
             surface_obj[VOXEL_ROOT_INSTANCE_UUID_FLAG] = root_uuid
             report.repaired_surfaces += 1
+
+        # Reparent and repair volume proxy children
+        mesh = resolve_authoritative_mesh(root)
+        mesh_uuid = getattr(mesh.voxel_workspace, "uuid", "") if (mesh and hasattr(mesh, "voxel_workspace")) else ""
+        for obj in list(bpy.data.objects):
+            if is_volume_render_object(obj):
+                child_root_uuid = obj.get(PROXY_ROOT_INSTANCE_UUID_FLAG, "")
+                child_mesh_uuid = obj.get(PROXY_SOURCE_UUID_FLAG, "")
+                if (child_root_uuid and child_root_uuid == root_uuid) or (obj.parent == root) or (surface_obj and obj.parent == surface_obj):
+                    if obj.parent != root:
+                        obj.parent = root
+                        obj.matrix_local.identity()
+                        report.reparented_children += 1
+                    obj[PROXY_ROOT_INSTANCE_UUID_FLAG] = root_uuid
+                    if mesh_uuid:
+                        obj[PROXY_SOURCE_UUID_FLAG] = mesh_uuid
+                    obj["voxel_render_role"] = "VOLUME"
     elif is_surface_render_object(root_or_surface):
         root = ensure_root_for_surface(root_or_surface)
         report.repaired_surfaces += 1
