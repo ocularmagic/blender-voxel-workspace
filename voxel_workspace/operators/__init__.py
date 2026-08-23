@@ -36,6 +36,10 @@ from .import_glb import (
     VOXEL_OT_import_glb,
     IMPORT_GLB_OPERATOR_CLASSES,
 )
+from .export_slices import (
+    VOXEL_OT_export_slices,
+    EXPORT_OPERATOR_CLASSES,
+)
 from .shelf import (
     VOXEL_OT_shelf_activate,
     SHELF_OPERATOR_CLASSES,
@@ -47,6 +51,7 @@ OPERATOR_CLASSES: List[Type] = [
     *BRUSH_OPERATOR_CLASSES,
     *PALETTE_OPERATOR_CLASSES,
     *IMPORT_GLB_OPERATOR_CLASSES,
+    *EXPORT_OPERATOR_CLASSES,
     *SHELF_OPERATOR_CLASSES,
 ]
 
@@ -68,6 +73,7 @@ __all__ = [
     "VOXEL_OT_remove_palette_color",
     "VOXEL_OT_eyedropper",
     "VOXEL_OT_compact_palette",
+    "VOXEL_OT_sort_palette_color",
     "VOXEL_OT_save_palette_preset",
     "VOXEL_OT_load_palette_preset",
     "VOXEL_OT_import_glb",

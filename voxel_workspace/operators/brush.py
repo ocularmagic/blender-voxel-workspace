@@ -144,26 +144,6 @@ def brush_display_color_for_scene(scene: Any, mesh: Any, mode: str) -> Tuple[flo
         return fallback
 
 
-def _request_preview_for_brush(context: Any, mesh: Any, mode: str) -> None:
-    """Kick material-preview generation when a palette index is first painted."""
-    if context is None or mesh is None:
-        return
-    normalized = str(mode).upper()
-    if normalized not in {"ADD_SURFACE", "ADD_VOLUME", "PLACE"}:
-        return
-    try:
-        from ..blender.material_domains import get_palette
-        from ..ui.palette_icons import request_material_preview
-        cell = brush_cell_for_scene(context.scene, mode)
-        pal_type = "VOLUME" if normalized == "ADD_VOLUME" else "SURFACE"
-        for entry in get_palette(mesh, pal_type):
-            if int(entry.index) == int(cell.index):
-                request_material_preview(getattr(entry, "material", None))
-                return
-    except Exception:
-        return
-
-
 from ..blender.object_graph import (
     resolve_volume_context,
     resolve_authoritative_mesh,
@@ -521,7 +501,6 @@ class BrushSession:
             self.stroke = None
             self.pick_grid = None
             update_volume_gpu_preview(entry, dirty_only=False)
-            _request_preview_for_brush(context, v_ctx.mesh, self.mode)
             tag_redraw_all_viewports()
             return {'RUNNING_MODAL'}
 

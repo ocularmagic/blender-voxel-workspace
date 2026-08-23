@@ -3,6 +3,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 import numpy as np
 
+import colorsys
+
 try:
     import bpy
     from bpy.props import EnumProperty, FloatVectorProperty, IntProperty, StringProperty
@@ -1141,6 +1143,104 @@ class VOXEL_OT_compact_palette(Operator):
         return {'FINISHED'}
 
 
+class VOXEL_OT_sort_palette_color(Operator):
+    """Sort the palette entries by hue."""
+    bl_idname = "voxel.sort_palette_color"
+    bl_label = "Sort Palette by Hue"
+    bl_description = "Reassign palette indices by sorting the display colors by hue"
+    bl_options = {'REGISTER'}
+
+    if bpy is not None:
+        palette_type: EnumProperty(
+            name="Palette Type",
+            items=[
+                ("SURFACE", "Surface", "Surface Palette"),
+                ("VOLUME", "Volume", "Volume Palette"),
+            ],
+            default="SURFACE",
+        )
+
+    @staticmethod
+    def _hue_sort_key(entry: Any, pal_type: str) -> Tuple[float, float, float]:
+        """Return an (hue, saturation, value) key for sorting.
+
+        Resolves the entry's color the same way the swatch renderer does
+        (material-first via ``display_rgba_from_entry``), gamma-corrects the
+        linear RGBA to sRGB bytes, then converts to HSV. Hue wraps; sorting
+        ascending on the full (hue, sat, value) tuple gives a readable wheel.
+        """
+        from ..blender.material_domains import display_rgba_from_entry
+        rgba = display_rgba_from_entry(entry, pal_type)
+        srgb = rgba_linear_to_srgb_bytes(rgba)
+        r, g, b = (float(srgb[0]) / 255.0, float(srgb[1]) / 255.0, float(srgb[2]) / 255.0)
+        h, s, v = colorsys.rgb_to_hsv(r, g, b)
+        return (h, s, v)
+
+    def execute(self, context):
+        v_ctx = resolve_volume_context(context)
+        if v_ctx is None or v_ctx.mesh is None:
+            self.report({'WARNING'}, "No active voxel volume")
+            return {'CANCELLED'}
+
+        mesh = v_ctx.mesh
+        props = mesh.voxel_workspace
+        pal_type = getattr(self, "palette_type", "SURFACE").upper()
+        from ..blender.material_domains import get_palette
+        from ..blender.properties import ensure_palette
+        ensure_palette(mesh)
+
+        target_palette = get_palette(mesh, pal_type)
+        used = [e for e in target_palette if e.index > 0]
+        if len(used) < 2:
+            self.report({'INFO'}, f"{pal_type.title()} palette has fewer than two colors; nothing to sort")
+            return {'CANCELLED'}
+
+        # Sort all entries (used and unused) by resolved display-color hue.
+        sorted_entries = sorted(used, key=lambda e: self._hue_sort_key(e, pal_type))
+
+        # Build a bijection old_index -> new_index over every present index.
+        remap_table: Dict[int, int] = {}
+        for new_idx, entry in enumerate(sorted_entries, start=1):
+            remap_table[entry.index] = new_idx
+
+        # Remap occupied bricks atomically (single simultaneous pass).
+        remap_volume_palette_indices(
+            mesh,
+            remap_table,
+            palette_type=pal_type,
+            push_undo=False,
+        )
+
+        # Reassign each entry's index to its sorted position.
+        for entry in target_palette:
+            if entry.index in remap_table:
+                entry.index = remap_table[entry.index]
+
+        drop_palette_lut(props.uuid)
+
+        # Update active color in scene through the same remap table.
+        scene = context.scene
+        if pal_type == "VOLUME":
+            old_active = scene.voxel_workspace.active_volume_palette_index
+            new_active = remap_table.get(old_active, old_active)
+            scene.voxel_workspace.active_volume_palette_index = new_active
+        else:
+            old_active = scene.voxel_workspace.active_surface_palette_index
+            new_active = remap_table.get(old_active, old_active)
+            scene.voxel_workspace.active_surface_palette_index = new_active
+            scene.voxel_workspace.active_palette_index = new_active
+            if 1 <= new_active <= 8:
+                scene.voxel_workspace.active_palette_choice = str(new_active)
+
+        tag_redraw_all_viewports()
+        if bpy is not None and hasattr(bpy.ops, "ed") and hasattr(bpy.ops.ed, "undo_push"):
+            try:
+                bpy.ops.ed.undo_push(message=f"Sort {pal_type.title()} Palette by Hue")
+            except Exception:
+                pass
+        return {'FINISHED'}
+
+
 class VOXEL_OT_save_palette_preset(Operator):
     """Save the active volume's palette to a JSON preset file."""
     bl_idname = "voxel.save_palette_preset"
@@ -1492,6 +1592,7 @@ PALETTE_OPERATOR_CLASSES = [
     VOXEL_OT_remove_palette_color,
     VOXEL_OT_eyedropper,
     VOXEL_OT_compact_palette,
+    VOXEL_OT_sort_palette_color,
     VOXEL_OT_save_palette_preset,
     VOXEL_OT_load_palette_preset,
 ]

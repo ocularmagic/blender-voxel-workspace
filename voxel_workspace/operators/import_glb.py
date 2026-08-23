@@ -143,7 +143,7 @@ class VOXEL_OT_import_glb(Operator):
         padding: IntProperty(
             name="Padding",
             description="Empty voxel border kept around the fitted model",
-            default=1,
+            default=0,
             min=0,
             max=32,
         )
@@ -285,6 +285,13 @@ class VOXEL_OT_import_glb(Operator):
         except Exception as exc:
             self.report({"ERROR"}, f"Failed to commit imported volume: {exc}")
             return {"CANCELLED"}
+
+        # Generate material previews immediately so the palette swatch icons show
+        # the imported materials right away instead of waiting for a paint action.
+        try:
+            bpy.ops.wm.preview_ensure()
+        except Exception:
+            pass
 
         elapsed = perf_counter() - started
         bricks = len(result.grid.bricks)

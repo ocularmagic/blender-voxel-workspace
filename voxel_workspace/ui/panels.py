@@ -20,8 +20,11 @@ from ..operators.palette import get_used_palette_counts
 from .palette_icons import generate_swatch_icon_id
 from ..blender.material_domains import get_palette, display_rgba_from_entry
 
-# Operator chips show the 16px icon slot. Keep the source bitmap at 32px.
+# Operator chips show a scaled icon slot. Keep the source bitmap at 32px.
 PALETTE_SWATCH_SIZE_PX = 32
+# Button scale factor for the swatch chips. 1.0 renders the icon at the default
+# ~16px slot; raising it makes the visible swatch larger. Grid stays at 8 columns.
+PALETTE_SWATCH_SCALE = 1.5
 
 
 def _principled_volume_node(tree: Any) -> Any:
@@ -163,13 +166,14 @@ def draw_typed_palette(
     volume_tab.palette_type = "VOLUME"
 
     header = layout.row()
-    header.label(text=f"{pal_tab.title()} Palette", icon='COLOR')
     if is_voxel and mesh is not None:
         op_pick = header.operator("voxel.eyedropper", text="Pick", icon='EYEDROPPER')
         op_add = header.operator("voxel.add_palette_color", text="Add", icon='ADD')
         op_add.palette_type = pal_tab
         op_comp = header.operator("voxel.compact_palette", text="Compact", icon='ALIGN_JUSTIFY')
         op_comp.palette_type = pal_tab
+        op_sort = header.operator("voxel.sort_palette_color", text="Sort", icon='SORT_ASC')
+        op_sort.palette_type = pal_tab
 
     active_index = (
         palette_props.active_volume_palette_index
@@ -222,6 +226,8 @@ def draw_typed_palette(
             material=getattr(entry_item, "material", None),
         )
         cell = grid_flow.column(align=True)
+        cell.scale_y = PALETTE_SWATCH_SCALE
+        cell.scale_x = PALETTE_SWATCH_SCALE
         op = cell.operator(
             "voxel.select_palette_color",
             text="",
@@ -345,6 +351,9 @@ def _draw_volume_settings(layout: Any, context: Any) -> None:
         import_row = vol_box.row()
         import_row.scale_y = 1.2
         import_row.operator("voxel.import_glb", text="Import GLB into Volume", icon="IMPORT")
+        export_row = vol_box.row()
+        export_row.scale_y = 1.2
+        export_row.operator("voxel.export_slices", text="Export Voxel Slices", icon="EXPORT")
     else:
         vol_box.label(text="No active voxel volume", icon="INFO")
 
