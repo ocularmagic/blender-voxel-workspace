@@ -34,6 +34,16 @@ def _palette_choice_changed(self, _context):
     self.active_palette_index = int(self.active_palette_choice)
 
 
+def _surface_swatch_list_changed(self, context):
+    from ..operators.palette import apply_swatch_list_selection
+    apply_swatch_list_selection(self, context, "SURFACE")
+
+
+def _volume_swatch_list_changed(self, context):
+    from ..operators.palette import apply_swatch_list_selection
+    apply_swatch_list_selection(self, context, "VOLUME")
+
+
 def _display_changed(_self, _context):
     from .runtime import tag_redraw_all_viewports
     tag_redraw_all_viewports()
@@ -309,6 +319,20 @@ class VoxelSceneProperties(PropertyGroup):
             ],
             default="ALL",
         )
+        surface_swatch_list_index: IntProperty(
+            name="Surface Swatch List Index",
+            description="UIList index of the highlighted Surface palette entry",
+            default=1,
+            min=0,
+            update=_surface_swatch_list_changed,
+        )
+        volume_swatch_list_index: IntProperty(
+            name="Volume Swatch List Index",
+            description="UIList index of the highlighted Volume palette entry",
+            default=1,
+            min=0,
+            update=_volume_swatch_list_changed,
+        )
         active_tool: EnumProperty(
             name="Active Tool",
             items=[
@@ -375,21 +399,16 @@ def ensure_palette(mesh: Any) -> None:
         item.color = DEFAULT_PALETTE[0]
         item.material_owned = True
 
-        default_names = {
-            1: "Neutral Gray",
-            2: "Red",
-            3: "Green",
-            4: "Blue",
-            5: "Yellow",
-            6: "Magenta",
-            7: "Cyan",
-            8: "Orange",
-        }
-        for idx in range(1, len(DEFAULT_PALETTE)):
-            item = props.surface_palette.add()
-            name = default_names.get(idx, f"Color {idx}")
-            color = DEFAULT_PALETTE[idx]
-            initialize_surface_entry(mesh, item, index=idx, name=name, color=color)
+        # One neutral starting material. Additional Surface entries are created
+        # explicitly by the user instead of preallocating seven unused materials.
+        item1 = props.surface_palette.add()
+        initialize_surface_entry(
+            mesh,
+            item1,
+            index=1,
+            name="Neutral Gray",
+            color=DEFAULT_PALETTE[1],
+        )
 
     # Populate Volume Palette if empty
     if len(props.volume_palette) == 0:

@@ -19,12 +19,16 @@ from .ui import workspace as _workspace_ui
 # Blender can retain an old extension submodule in ``sys.modules`` after an
 # in-session reinstall. Reload only that stale module before binding its API so
 # enabling the freshly copied extension cannot fail on a newly added symbol.
-if not hasattr(_workspace_ui, "schedule_voxel_workspace_registration"):
+if (
+    not hasattr(_workspace_ui, "schedule_voxel_workspace_registration")
+    or not hasattr(_workspace_ui, "install_workspace_handlers")
+):
     _workspace_ui = importlib.reload(_workspace_ui)
 
 register_voxel_workspace = _workspace_ui.register_voxel_workspace
 schedule_voxel_workspace_registration = _workspace_ui.schedule_voxel_workspace_registration
 unregister_voxel_workspace = _workspace_ui.unregister_voxel_workspace
+install_workspace_handlers = _workspace_ui.install_workspace_handlers
 
 # Central ordered registry of Blender types
 CLASSES: List[Type] = [
@@ -60,13 +64,14 @@ def register() -> None:
     except Exception:
         pass
 
-    # Create/activate the custom Voxel Workspace (Asset Shelf + right N-panel).
-    # Safe no-op in background import contexts without a window.
+    # Recreate the Voxel Workspace tab on a timer. Never assign
+    # window.workspace from register() — that runs inside install notifiers
+    # and crashes Blender 5.2 in ED_workspace_change.
     try:
-        register_voxel_workspace()
+        install_workspace_handlers()
         schedule_voxel_workspace_registration()
     except Exception:
-        schedule_voxel_workspace_registration()
+        pass
 
     _registered = True
 

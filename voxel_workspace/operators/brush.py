@@ -30,6 +30,7 @@ from ..blender.runtime import (
 from ..blender.gpu_preview import (
     set_hover_state,
     clear_hover_state,
+    refresh_material_display_colors,
     update_volume_gpu_preview,
     stop_editing,
 )
@@ -121,6 +122,26 @@ def brush_cell_for_scene(scene: Any, mode: str) -> VoxelCell:
     if normalized == 'ERASE':
         return CELL_EMPTY
     raise ValueError(f"Unknown brush mode: {mode}")
+
+
+def brush_display_color_for_scene(scene: Any, mesh: Any, mode: str) -> Tuple[float, float, float, float]:
+    """Resolve the live material-derived hover color for the active brush."""
+    normalized = str(mode).upper()
+    if normalized == "ERASE":
+        return (1.0, 0.2, 0.2, 0.6)
+    palette_type = "VOLUME" if normalized == "ADD_VOLUME" else "SURFACE"
+    fallback = (0.25, 0.65, 1.0, 0.45) if palette_type == "VOLUME" else (1.0, 0.9, 0.2, 0.6)
+    if scene is None or mesh is None:
+        return fallback
+    try:
+        from ..blender.material_domains import find_entry, display_rgba_from_entry
+        cell = brush_cell_for_scene(scene, normalized)
+        entry = find_entry(mesh, palette_type, cell.index)
+        rgba = display_rgba_from_entry(entry, palette_type)
+        alpha = 0.45 if palette_type == "VOLUME" else 0.6
+        return (float(rgba[0]), float(rgba[1]), float(rgba[2]), alpha)
+    except Exception:
+        return fallback
 
 
 def _request_preview_for_brush(context: Any, mesh: Any, mode: str) -> None:
@@ -316,6 +337,7 @@ class BrushSession:
             self.cleanup()
             stop_editing(context)
             return {'CANCELLED'}
+        refresh_material_display_colors(entry)
         if self.root_instance_uuid and v_ctx.root_instance_uuid != self.root_instance_uuid:
             self.cleanup(entry)
             stop_editing(context)
@@ -506,12 +528,7 @@ class BrushSession:
         # 7. Handle Mouse Move while Idle (Hover highlight)
         if event.type == 'MOUSEMOVE' and not self.is_dragging:
             if hover_cell is not None and hover_normal is not None:
-                color = {
-                    'ADD_SURFACE': (1.0, 0.9, 0.2, 0.6),
-                    'PLACE': (1.0, 0.9, 0.2, 0.6),
-                    'ADD_VOLUME': (0.25, 0.65, 1.0, 0.45),
-                    'ERASE': (1.0, 0.2, 0.2, 0.6),
-                }.get(self.mode, (1.0, 0.2, 0.2, 0.6))
+                color = brush_display_color_for_scene(context.scene, v_ctx.mesh, self.mode)
                 set_hover_state(hover_cell, hover_normal, color=color)
             else:
                 clear_hover_state()

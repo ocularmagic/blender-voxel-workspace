@@ -165,6 +165,123 @@ def reconcile_native_render(mesh: Any) -> None:
     update_volume_gpu_preview(entry, dirty_only=False)
 
 
+_SWATCH_SYNC_GUARD = False
+
+
+def apply_active_palette_index(context: Any, pal_type: str, index: int) -> None:
+    """Set the active typed palette index and keep the swatch list highlight in sync."""
+    global _SWATCH_SYNC_GUARD
+    pal_type = (pal_type or "SURFACE").upper()
+    scene = getattr(context, "scene", None) if context is not None else None
+    if scene is None or not hasattr(scene, "voxel_workspace"):
+        return
+    props = scene.voxel_workspace
+    if pal_type == "VOLUME":
+        props.active_volume_palette_index = index
+    else:
+        props.active_surface_palette_index = index
+        props.active_palette_index = index
+        if 1 <= index <= 8:
+            try:
+                props.active_palette_choice = str(index)
+            except Exception:
+                pass
+
+    v_ctx = resolve_volume_context(context)
+    if v_ctx and v_ctx.mesh and pal_type == "SURFACE":
+        from ..blender.material_domains import used_surface_indices
+        mesh = v_ctx.mesh
+        entry = get_or_load(mesh)
+        if entry and entry.grid:
+            surf_indices = used_surface_indices(mesh, entry.grid)
+            if index in surf_indices and v_ctx.surface_object:
+                v_ctx.surface_object.active_material_index = surf_indices.index(index)
+
+    if v_ctx is not None and v_ctx.mesh is not None and not _SWATCH_SYNC_GUARD:
+        from ..blender.material_domains import get_palette
+        palette = get_palette(v_ctx.mesh, pal_type)
+        for list_index, entry_item in enumerate(palette):
+            if int(entry_item.index) != int(index):
+                continue
+            current = (
+                props.volume_swatch_list_index
+                if pal_type == "VOLUME"
+                else props.surface_swatch_list_index
+            )
+            if current != list_index:
+                _SWATCH_SYNC_GUARD = True
+                try:
+                    if pal_type == "VOLUME":
+                        props.volume_swatch_list_index = list_index
+                    else:
+                        props.surface_swatch_list_index = list_index
+                finally:
+                    _SWATCH_SYNC_GUARD = False
+            break
+
+    tag_redraw_all_viewports()
+
+
+def apply_swatch_list_selection(scene_props: Any, context: Any, pal_type: str) -> None:
+    """Map a UIList collection index to the active palette index."""
+    if _SWATCH_SYNC_GUARD or scene_props is None or context is None:
+        return
+    pal_type = (pal_type or "SURFACE").upper()
+    v_ctx = resolve_volume_context(context)
+    if v_ctx is None or v_ctx.mesh is None:
+        return
+    from ..blender.material_domains import get_palette
+    palette = get_palette(v_ctx.mesh, pal_type)
+    list_index = (
+        scene_props.volume_swatch_list_index
+        if pal_type == "VOLUME"
+        else scene_props.surface_swatch_list_index
+    )
+    if list_index < 0 or list_index >= len(palette):
+        return
+    index = int(palette[list_index].index)
+    if index <= 0:
+        return
+    apply_active_palette_index(context, pal_type, index)
+
+
+class VOXEL_OT_select_palette_tab(Operator):
+    """Switch typed palette and activate its matching placement tool."""
+    bl_idname = "voxel.select_palette_tab"
+    bl_label = "Select Voxel Palette"
+    bl_description = "Switch palette and start placing voxels of that type"
+    bl_options = {'INTERNAL'}
+
+    if bpy is not None:
+        palette_type: EnumProperty(
+            name="Palette Type",
+            items=[
+                ("SURFACE", "Surface", "Use the Surface Palette and Add Surface tool"),
+                ("VOLUME", "Volume", "Use the Volume Palette and Add Volume tool"),
+            ],
+            default="SURFACE",
+        )
+
+    def execute(self, context):
+        if bpy is None or context is None or context.scene is None:
+            return {'CANCELLED'}
+        props = getattr(context.scene, "voxel_workspace", None)
+        if props is None:
+            return {'CANCELLED'}
+        pal_type = str(getattr(self, "palette_type", "SURFACE")).upper()
+        props.active_palette_tab = pal_type
+        desired_tool = "ADD_VOLUME" if pal_type == "VOLUME" else "ADD_SURFACE"
+        if props.active_tool != desired_tool:
+            op = bpy.ops.voxel.start_volume if pal_type == "VOLUME" else bpy.ops.voxel.start_surface
+            try:
+                op()
+            except Exception:
+                # Palette switching remains valid when no voxel field is active.
+                pass
+        tag_redraw_all_viewports()
+        return {'FINISHED'}
+
+
 class VOXEL_OT_select_palette_color(Operator):
     """Set the active placement color index."""
     bl_idname = "voxel.select_palette_color"
@@ -190,29 +307,11 @@ class VOXEL_OT_select_palette_color(Operator):
         )
 
     def execute(self, context):
-        scene = context.scene
-        pal_type = getattr(self, "palette_type", "SURFACE").upper()
-        if scene is not None and hasattr(scene, "voxel_workspace"):
-            if pal_type == "VOLUME":
-                scene.voxel_workspace.active_volume_palette_index = self.index
-            else:
-                scene.voxel_workspace.active_surface_palette_index = self.index
-                scene.voxel_workspace.active_palette_index = self.index
-                if 1 <= self.index <= 8:
-                    scene.voxel_workspace.active_palette_choice = str(self.index)
-
-        # Activate corresponding material slot if active object is a voxel mesh
-        v_ctx = resolve_volume_context(context)
-        if v_ctx and v_ctx.mesh and pal_type == "SURFACE":
-            from ..blender.material_domains import used_surface_indices
-            mesh = v_ctx.mesh
-            entry = get_or_load(mesh)
-            if entry and entry.grid:
-                surf_indices = used_surface_indices(mesh, entry.grid)
-                if self.index in surf_indices and v_ctx.surface_object:
-                    v_ctx.surface_object.active_material_index = surf_indices.index(self.index)
-
-        tag_redraw_all_viewports()
+        apply_active_palette_index(
+            context,
+            getattr(self, "palette_type", "SURFACE"),
+            int(self.index),
+        )
         return {'FINISHED'}
 
 
@@ -1382,6 +1481,7 @@ class VOXEL_OT_load_palette_preset(Operator):
 
 
 PALETTE_OPERATOR_CLASSES = [
+    VOXEL_OT_select_palette_tab,
     VOXEL_OT_select_palette_color,
     VOXEL_OT_edit_palette_material,
     VOXEL_OT_sync_display_to_material_color,

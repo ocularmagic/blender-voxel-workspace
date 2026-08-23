@@ -221,7 +221,7 @@ def _flush_material_previews() -> None:
 
 
 def request_material_preview(material: Any) -> None:
-    """Queue Blender's native material-preview render (not from panel draw)."""
+    """Queue a material thumbnail refresh from explicit non-draw actions."""
     global _preview_timer_registered
     if material is None or bpy is None:
         return
@@ -261,7 +261,8 @@ def generate_swatch_icon_id(
 
     mat_preview = None
     if is_used and material is not None:
-        request_material_preview(material)
+        # Never launch preview jobs from panel draw. Reuse only pixels that
+        # Blender (or an explicit non-draw action) has already generated.
         mat_preview = _material_preview_rgba(material, size)
 
     mat_key = "flat"

@@ -10,7 +10,7 @@ import zipfile
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(ROOT, "voxel_workspace")
-OUT = os.path.join(ROOT, "dist", "voxel_workspace-0.2.11.zip")
+OUT = os.path.join(ROOT, "dist", "voxel_workspace-0.2.15.zip")
 
 # Fixed timestamp keeps the archive reproducible.
 FIXED_DT = (2026, 8, 22, 8, 45, 0)

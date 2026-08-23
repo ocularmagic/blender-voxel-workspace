@@ -18,13 +18,110 @@ from ..blender.runtime import get_volume
 from ..blender.object_graph import resolve_volume_context
 from ..operators.palette import get_used_palette_counts
 from .palette_icons import generate_swatch_icon_id
-from ..blender.material_domains import get_palette
+from ..blender.material_domains import get_palette, display_rgba_from_entry
+
+# Operator chips show the 16px icon slot. Keep the source bitmap at 32px.
+PALETTE_SWATCH_SIZE_PX = 32
+
+
+def _principled_volume_node(tree: Any) -> Any:
+    for node in getattr(tree, "nodes", []):
+        if getattr(node, "bl_idname", "") == "ShaderNodeVolumePrincipled":
+            return node
+    return tree.nodes.get("Principled Volume") if tree is not None else None
+
+
+def _draw_node_inputs(layout: Any, node: Any) -> None:
+    if node is None:
+        return
+    column = layout.column(align=True)
+    for socket in node.inputs:
+        if getattr(socket, "is_linked", False):
+            continue
+        if hasattr(socket, "enabled") and not socket.enabled:
+            continue
+        if getattr(socket, "type", "") == "SHADER":
+            continue
+        try:
+            column.prop(socket, "default_value", text=socket.name)
+        except Exception:
+            continue
+
+
+def _draw_material_socket_widget(layout: Any, material: Any, pal_tab: str) -> None:
+    """Draw the same Surface/Volume socket UI as the Material properties tab."""
+    tree = getattr(material, "node_tree", None)
+    if tree is None:
+        return
+    layout.use_property_split = True
+    if str(pal_tab).upper() == "VOLUME":
+        _draw_node_inputs(layout, _principled_volume_node(tree))
+        return
+    try:
+        from bl_ui.properties_material import panel_node_draw
+        panel_node_draw(layout, tree, "OUTPUT_MATERIAL", "Surface")
+        return
+    except Exception:
+        pass
+    bsdf = tree.nodes.get("Principled BSDF")
+    if bsdf is None:
+        bsdf = next((node for node in tree.nodes if getattr(node, "bl_idname", "") == "ShaderNodeBsdfPrincipled"), None)
+    _draw_node_inputs(layout, bsdf)
+
+
+def _draw_palette_entry_editor(
+    layout: Any,
+    active_entry: Any,
+    pal_tab: str,
+    active_index: int,
+    counts: Any,
+    all_entries: Any,
+) -> None:
+    """Draw active-entry controls in a block separate from the preview."""
+    material = getattr(active_entry, "material", None)
+    if material is not None:
+        _draw_material_socket_widget(layout, material, pal_tab)
+
+    edit_box = layout.box()
+    active_count = counts.get(active_index, 0)
+    edit_box.label(
+        text=f"{pal_tab.title()} [{active_index}]  •  {active_count} voxels",
+        icon='COLOR',
+    )
+
+    mat_box = edit_box.box()
+    mat_box.label(text="Native Blender Material", icon='MATERIAL')
+    mat_box.label(text=f"Material: {active_entry.material.name if active_entry.material else 'None'}")
+    edit_op = mat_box.operator("voxel.edit_palette_material", text="Edit Material Binding…", icon='PREFERENCES')
+    edit_op.palette_type = pal_tab
+    edit_op.index = active_index
+
+    if not active_entry.material_owned and active_entry.material is not None:
+        op_single = mat_box.operator("voxel.make_material_single_user", text="Make Single User", icon='UNLINKED')
+        op_single.palette_type = pal_tab
+        op_single.index = active_index
+
+    btn_row = edit_box.row(align=True)
+    dup_op = btn_row.operator("voxel.duplicate_palette_color", text="Duplicate", icon='DUPLICATE')
+    dup_op.palette_type = pal_tab
+    dup_op.source_index = active_index
+    rem_op = btn_row.operator("voxel.remove_palette_color", text="Remove", icon='TRASH')
+    rem_op.palette_type = pal_tab
+    rem_op.index = active_index
+    rem_op.replacement_index = (
+        1 if active_index != 1 else (all_entries[1].index if len(all_entries) > 1 else 0)
+    )
 
 
 # ---------------------------------------------------------------------------
 # Shared typed-palette renderer
 # ---------------------------------------------------------------------------
-def draw_typed_palette(layout: Any, context: Any, *, compact: bool = False) -> None:
+def draw_typed_palette(
+    layout: Any,
+    context: Any,
+    *,
+    compact: bool = False,
+) -> None:
     """Render the active typed palette's tabs, swatches, and editor.
 
     Used by the left palette panel. ``compact`` trims spacing for the narrow
@@ -49,9 +146,21 @@ def draw_typed_palette(layout: Any, context: Any, *, compact: bool = False) -> N
     mesh = v_ctx.mesh if is_voxel else None
     pal_tab = getattr(palette_props, "active_palette_tab", "SURFACE").upper()
 
-    # Material Type / Palette Selector Tabs
+    # Material Type / Palette Selector Tabs. Operators keep the typed palette
+    # and the active Surface/Volume placement tool synchronized both ways.
     tab_row = layout.row(align=True)
-    tab_row.prop(palette_props, "active_palette_tab", expand=True)
+    surface_tab = tab_row.operator(
+        "voxel.select_palette_tab",
+        text="Surface",
+        depress=pal_tab == "SURFACE",
+    )
+    surface_tab.palette_type = "SURFACE"
+    volume_tab = tab_row.operator(
+        "voxel.select_palette_tab",
+        text="Volume",
+        depress=pal_tab == "VOLUME",
+    )
+    volume_tab.palette_type = "VOLUME"
 
     header = layout.row()
     header.label(text=f"{pal_tab.title()} Palette", icon='COLOR')
@@ -92,75 +201,56 @@ def draw_typed_palette(layout: Any, context: Any, *, compact: bool = False) -> N
     else:
         entries = all_entries
 
-    # Swatch Grid
-    columns = 4 if compact else 8
-    grid_flow = layout.grid_flow(row_major=True, columns=columns, even_columns=True, even_rows=True)
+    # Square 16px operator icons, 8 per row. Do not scale the button or
+    # stack template_icon — both distort or hide the chip.
+    columns = 8
+    grid_flow = layout.grid_flow(
+        row_major=True,
+        columns=columns,
+        even_columns=False,
+        even_rows=False,
+    )
     for entry_item in entries:
         idx = entry_item.index
         is_active = (idx == active_index)
         is_used = (counts.get(idx, 0) > 0)
         icon_id = generate_swatch_icon_id(
-            tuple(entry_item.color),
+            display_rgba_from_entry(entry_item, pal_tab),
             is_active=is_active,
             is_used=is_used,
-            size=32,
+            size=PALETTE_SWATCH_SIZE_PX,
             material=getattr(entry_item, "material", None),
         )
-        cell_box = grid_flow.column(align=True)
-        row = cell_box.row(align=True)
-        row.scale_y = 1.0
-        row.scale_x = 1.0
-        op = row.operator(
+        cell = grid_flow.column(align=True)
+        op = cell.operator(
             "voxel.select_palette_color",
             text="",
-            icon_value=icon_id if icon_id != 0 else 0,
+            icon_value=icon_id if icon_id else 0,
+            depress=is_active,
         )
         op.palette_type = pal_tab
         op.index = idx
 
-    # Active Swatch Editor Details
+    # Active material preview sits flush under the last chip row.
     active_entry = next((e for e in target_palette if e.index == active_index), None)
     if active_entry is not None:
-        edit_box = layout.box()
-        active_count = counts.get(active_index, 0)
-        edit_box.label(
-            text=f"{pal_tab.title()} Color [{active_index}]  •  {active_count} voxels",
-            icon='COLOR',
-        )
-        edit_box.prop(active_entry, "color", text="")
-        edit_box.label(text="Display color controls brush/GPU preview; Material controls render.", icon='INFO')
-        edit_box.prop(active_entry, "name", text="Name")
+        material = getattr(active_entry, "material", None)
+        if material is not None:
+            try:
+                # Match Blender's Material Properties panel exactly. Do not
+                # force a preview render here; Blender owns this widget's
+                # refresh and interaction state.
+                layout.template_preview(material)
+            except Exception:
+                pass
 
-        mat_box = edit_box.box()
-        mat_box.label(text="Native Blender Material", icon='MATERIAL')
-        mat_box.label(text=f"Material: {active_entry.material.name if active_entry.material else 'None'}")
-        edit_op = mat_box.operator("voxel.edit_palette_material", text="Edit Material Binding…", icon='PREFERENCES')
-        edit_op.palette_type = pal_tab
-        edit_op.index = active_index
-
-        sync_row = mat_box.row(align=True)
-        op_apply = sync_row.operator("voxel.sync_display_to_material", text="Apply Display", icon='FORWARD')
-        op_apply.palette_type = pal_tab
-        op_apply.index = active_index
-        op_read = sync_row.operator("voxel.sync_material_to_display", text="Read Base Color", icon='BACK')
-        op_read.palette_type = pal_tab
-        op_read.index = active_index
-
-        if not active_entry.material_owned and active_entry.material is not None:
-            op_single = mat_box.operator("voxel.make_material_single_user", text="Make Single User", icon='UNLINKED')
-            op_single.palette_type = pal_tab
-            op_single.index = active_index
-
-        # Duplicate & Remove Actions
-        btn_row = edit_box.row(align=True)
-        dup_op = btn_row.operator("voxel.duplicate_palette_color", text="Duplicate", icon='DUPLICATE')
-        dup_op.palette_type = pal_tab
-        dup_op.source_index = active_index
-        rem_op = btn_row.operator("voxel.remove_palette_color", text="Remove", icon='TRASH')
-        rem_op.palette_type = pal_tab
-        rem_op.index = active_index
-        rem_op.replacement_index = (
-            1 if active_index != 1 else (all_entries[1].index if len(all_entries) > 1 else 0)
+        _draw_palette_entry_editor(
+            layout,
+            active_entry,
+            pal_tab,
+            active_index,
+            counts,
+            all_entries,
         )
 
 

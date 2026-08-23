@@ -35,12 +35,14 @@ def _build_default_palette_rgba_lut() -> np.ndarray:
 
 def build_typed_palette_lut(entries: Any, volume_alpha: Optional[float] = None) -> np.ndarray:
     """Build one independent 256-row display LUT from a typed palette collection."""
+    from .material_domains import display_rgba_from_entry
     lut = np.zeros((256, 4), dtype=np.float32)
+    palette_type = "VOLUME" if volume_alpha is not None else "SURFACE"
     for palette_entry in entries:
         idx = int(palette_entry.index)
         if not (1 <= idx <= 255):
             continue
-        color = np.asarray(tuple(palette_entry.color), dtype=np.float32).copy()
+        color = np.asarray(display_rgba_from_entry(palette_entry, palette_type), dtype=np.float32).copy()
         if volume_alpha is not None:
             color[3] = float(volume_alpha)
         lut[idx] = color
@@ -135,7 +137,11 @@ def palette_indices_to_rgba(palette_indices: np.ndarray, lut: Optional[np.ndarra
     return lut[clipped]
 
 
-def recolor_preview_batches(entry: Any, palette_type: str) -> None:
+def recolor_preview_batches(
+    entry: Any,
+    palette_type: str,
+    lut: Optional[np.ndarray] = None,
+) -> None:
     """Rebuild color-baked batches from cached CPU buffers without remeshing."""
     if entry is None:
         return
@@ -146,12 +152,54 @@ def recolor_preview_batches(entry: Any, palette_type: str) -> None:
     else:
         buffers = entry.surface_preview_buffers
         batches = entry.gpu_batches
-    lut = get_palette_rgba_lut(entry, domain)
+    if lut is None:
+        lut = get_palette_rgba_lut(entry, domain)
     batches.clear()
     for coord, mesh_buffers in buffers.items():
         batch = build_brick_gpu_batch(mesh_buffers, lut=lut)
         if batch is not None:
             batches[coord] = batch
+
+
+def refresh_material_display_colors(entry: Any) -> bool:
+    """Refresh placement colors when bound material sockets change.
+
+    Material node inputs are edited directly by Blender, so palette-entry RNA
+    callbacks do not run. Compare fresh material-derived LUTs with the cached
+    Surface/Volume LUTs and recolor existing GPU batches only when needed.
+    """
+    if entry is None or bpy is None:
+        return False
+    mesh = next(
+        (
+            candidate
+            for candidate in bpy.data.meshes
+            if hasattr(candidate, "voxel_workspace")
+            and candidate.voxel_workspace.uuid == entry.uuid
+        ),
+        None,
+    )
+    if mesh is None:
+        return False
+
+    from .properties import ensure_palette
+    ensure_palette(mesh)
+    props = mesh.voxel_workspace
+    changed = False
+    for domain, entries, alpha, cache_name in (
+        ("SURFACE", props.surface_palette, None, "surface_palette_lut"),
+        ("VOLUME", props.volume_palette, 0.35, "volume_palette_lut"),
+    ):
+        fresh_lut = build_typed_palette_lut(entries, volume_alpha=alpha)
+        cached_lut = getattr(entry, cache_name, None)
+        if cached_lut is not None and np.array_equal(cached_lut, fresh_lut):
+            continue
+        setattr(entry, cache_name, fresh_lut)
+        if domain == "SURFACE":
+            entry.palette_lut = fresh_lut
+        recolor_preview_batches(entry, domain, lut=fresh_lut)
+        changed = True
+    return changed
 
 
 # --- Geometric Data Generators ---

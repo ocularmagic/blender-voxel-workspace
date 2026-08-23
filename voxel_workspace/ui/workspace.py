@@ -8,6 +8,11 @@ workspace therefore:
 * Adds Voxel Palette as another native UI category on that same strip.
 * Pins brush actions to the bottom Asset Shelf (Sculpting-style thumbnails).
 * Leaves native Toolbar tools (Select / Cursor / …) on the left.
+
+Never assign ``window.workspace`` from register/install/load_post. Doing that
+from inside ``wm_event_do_notifiers`` crashes Blender 5.2 (null compositor
+texture in ``ED_workspace_change``). Create the tab in place and configure
+regions only after the user is already on Voxel Workspace.
 """
 from typing import Any, Optional
 
@@ -23,13 +28,17 @@ except ImportError:
 WORKSPACE_NAME = "Voxel Workspace"
 _WORKSPACE_UUID = "voxel-workspace-layout-v7"
 _timer_registered = False
+_msgbus_owner = object()
+_pending_restore_name: Optional[str] = None
+_created_this_pass = False
 
 
 @persistent
 def _voxel_workspace_load_post(_unused: Any) -> None:
     """Recreate the file-local workspace after New/Open replaces datablocks."""
-    global _timer_registered
+    global _timer_registered, _pending_restore_name
     _timer_registered = False
+    _pending_restore_name = None
     schedule_voxel_workspace_registration()
 
 
@@ -50,6 +59,34 @@ def _register_load_handler() -> None:
 def _unregister_load_handler() -> None:
     if bpy is not None and _voxel_workspace_load_post in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_voxel_workspace_load_post)
+
+
+def _on_active_workspace_changed(*_args: Any) -> None:
+    schedule_voxel_workspace_registration()
+
+
+def _subscribe_workspace_activation() -> None:
+    if bpy is None:
+        return
+    try:
+        bpy.msgbus.clear_by_owner(_msgbus_owner)
+        bpy.msgbus.subscribe_rna(
+            key=(bpy.types.Window, "workspace"),
+            owner=_msgbus_owner,
+            args=(),
+            notify=_on_active_workspace_changed,
+        )
+    except Exception:
+        pass
+
+
+def _unsubscribe_workspace_activation() -> None:
+    if bpy is None:
+        return
+    try:
+        bpy.msgbus.clear_by_owner(_msgbus_owner)
+    except Exception:
+        pass
 
 
 def _find_workspace() -> Optional["WorkSpace"]:
@@ -197,49 +234,87 @@ def _workspace_is_configured(workspace: "WorkSpace") -> bool:
     return False
 
 
+def _duplicate_current_workspace(window: Any) -> Optional["WorkSpace"]:
+    """Copy the active workspace. Does not change ``window.workspace``."""
+    before = set(bpy.data.workspaces.keys())
+    try:
+        with bpy.context.temp_override(window=window, screen=window.screen):
+            result = bpy.ops.workspace.duplicate()
+    except Exception:
+        return None
+    if result != {"FINISHED"}:
+        return None
+    created = list(set(bpy.data.workspaces.keys()) - before)
+    if not created:
+        return None
+    return bpy.data.workspaces[created[0]]
+
+
+def install_workspace_handlers() -> None:
+    """Attach load/activation handlers without touching window.workspace."""
+    _register_load_handler()
+    _subscribe_workspace_activation()
+
+
+def _restore_pending_workspace(window: Any) -> None:
+    """Return to the pre-duplicate workspace on a later timer tick."""
+    global _pending_restore_name
+    name = _pending_restore_name
+    _pending_restore_name = None
+    if window is None or not name or bpy is None:
+        return
+    target = bpy.data.workspaces.get(name) or bpy.data.workspaces.get("Layout")
+    if target is not None and window.workspace != target:
+        window.workspace = target
+
+
 def register_voxel_workspace() -> Optional["WorkSpace"]:
-    """Create/reuse and configure the top-level Voxel Workspace tab."""
+    """Create/reuse the Voxel Workspace tab without leaving the user there.
+
+    ``workspace.duplicate()`` activates the copy, so we remember the previous
+    tab and switch back on a later timer tick — never in the same call, and
+    never from ``register()`` / install notifiers.
+    """
+    global _pending_restore_name, _created_this_pass
+    _created_this_pass = False
     if bpy is None:
         return None
     _register_load_handler()
+    _subscribe_workspace_activation()
     window = _window()
     if window is None:
         return None
 
     workspace = _find_workspace()
-    if workspace is not None and _workspace_is_configured(workspace):
-        return workspace
     if workspace is None:
-        template = (
-            bpy.data.workspaces.get("Modeling")
-            or bpy.data.workspaces.get("Sculpting")
-            or bpy.data.workspaces.get("Layout")
-        )
-        if template is not None and window.workspace != template:
-            window.workspace = template
+        current = getattr(window.workspace, "name", None)
+        if current and current != WORKSPACE_NAME and _pending_restore_name is None:
+            _pending_restore_name = current
+        workspace = _duplicate_current_workspace(window)
+        if workspace is None:
             return None
-        before = set(bpy.data.workspaces.keys())
-        with bpy.context.temp_override(window=window, screen=window.screen):
-            result = bpy.ops.workspace.duplicate()
-        if result != {"FINISHED"}:
-            return None
-        created = list(set(bpy.data.workspaces.keys()) - before)
-        if not created:
-            return None
-        workspace = bpy.data.workspaces[created[0]]
         workspace.name = WORKSPACE_NAME
+        workspace["voxel_workspace_layout"] = _WORKSPACE_UUID
+        _created_this_pass = True
 
-    if window.workspace != workspace:
-        window.workspace = workspace
-    _configure_workspace(workspace, window)
+    if window.workspace == workspace:
+        _configure_workspace(workspace, window)
     return workspace
 
 
 def _deferred_register() -> Optional[float]:
     global _timer_registered
+    window = _window()
     workspace = register_voxel_workspace()
-    if workspace is None or not _workspace_is_configured(workspace):
+    if workspace is None or window is None:
         return 0.5
+    # duplicate() just activated Voxel Workspace; restore next tick.
+    if _created_this_pass:
+        return 0.5
+    if window.workspace == workspace and not _workspace_is_configured(workspace):
+        return 0.5
+    if _pending_restore_name and window.workspace == workspace:
+        _restore_pending_workspace(window)
     _timer_registered = False
     return None
 
@@ -259,4 +334,5 @@ def unregister_voxel_workspace() -> None:
     if bpy is not None and _timer_registered and bpy.app.timers.is_registered(_deferred_register):
         bpy.app.timers.unregister(_deferred_register)
     _timer_registered = False
+    _unsubscribe_workspace_activation()
     _unregister_load_handler()

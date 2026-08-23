@@ -40,6 +40,59 @@ def find_entry(mesh: Any, domain: Union[VoxelDomain, str, int], index: int) -> O
     return None
 
 
+def display_rgba_from_entry(entry: Any, palette_type: str = "SURFACE") -> Tuple[float, float, float, float]:
+    """Return GPU/brush RGBA from the bound material, else the stored display color."""
+    fallback = (0.8, 0.8, 0.8, 1.0)
+    if entry is not None:
+        try:
+            fallback = tuple(float(component) for component in entry.color)
+            if len(fallback) < 4:
+                fallback = (fallback + (1.0, 1.0, 1.0, 1.0))[:4]
+        except Exception:
+            pass
+    material = getattr(entry, "material", None) if entry is not None else None
+    tree = getattr(material, "node_tree", None) if material is not None else None
+    if material is None or not getattr(material, "use_nodes", False) or tree is None:
+        return fallback
+    try:
+        if str(palette_type).upper() == "VOLUME":
+            for node in tree.nodes:
+                if getattr(node, "bl_idname", "") != "ShaderNodeVolumePrincipled":
+                    continue
+                for key in ("Color", "Scattering Color", "Absorption Color"):
+                    if key in node.inputs:
+                        value = node.inputs[key].default_value
+                        return (float(value[0]), float(value[1]), float(value[2]), 1.0)
+                break
+        else:
+            bsdf = tree.nodes.get("Principled BSDF")
+            if bsdf is None:
+                for node in tree.nodes:
+                    if getattr(node, "bl_idname", "") == "ShaderNodeBsdfPrincipled":
+                        bsdf = node
+                        break
+            if bsdf is not None and "Base Color" in bsdf.inputs:
+                value = bsdf.inputs["Base Color"].default_value
+                alpha = float(bsdf.inputs["Alpha"].default_value) if "Alpha" in bsdf.inputs else 1.0
+                return (float(value[0]), float(value[1]), float(value[2]), alpha)
+    except Exception:
+        pass
+    return fallback
+
+
+def sync_entry_color_from_material(entry: Any, palette_type: str = "SURFACE") -> None:
+    """Keep stored display color aligned with the material without extra UI."""
+    if entry is None:
+        return
+    rgba = display_rgba_from_entry(entry, palette_type)
+    try:
+        current = tuple(float(component) for component in entry.color)
+    except Exception:
+        current = ()
+    if len(current) != 4 or any(abs(left - right) > 1e-4 for left, right in zip(current, rgba)):
+        entry.color = rgba
+
+
 def create_default_surface_material(
     mesh: Any,
     entry: Any,
