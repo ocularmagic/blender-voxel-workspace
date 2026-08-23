@@ -143,10 +143,10 @@ def brush_display_color_for_scene(scene: Any, mesh: Any, mode: str) -> Tuple[flo
     if scene is None or mesh is None:
         return fallback
     try:
-        from ..blender.material_domains import find_entry, display_rgba_from_entry
+        from ..blender.material_domains import find_entry, display_rgba_from_entry, linear_to_srgb_rgba
         cell = brush_cell_for_scene(scene, normalized)
         entry = find_entry(mesh, palette_type, cell.index)
-        rgba = display_rgba_from_entry(entry, palette_type)
+        rgba = linear_to_srgb_rgba(display_rgba_from_entry(entry, palette_type))
         alpha = 0.45 if palette_type == "VOLUME" else 0.6
         return (float(rgba[0]), float(rgba[1]), float(rgba[2]), alpha)
     except Exception:

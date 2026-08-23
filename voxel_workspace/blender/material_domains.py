@@ -1,5 +1,6 @@
 """Native Blender Material lifecycle and domain management for voxel volumes."""
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
+import math
 import uuid
 
 try:
@@ -78,6 +79,26 @@ def display_rgba_from_entry(entry: Any, palette_type: str = "SURFACE") -> Tuple[
     except Exception:
         pass
     return fallback
+
+
+def linear_to_srgb_rgba(rgba):
+    """Convert a linear RGBA sequence to sRGB display-encoded RGBA.
+
+    Applies the standard sRGB transfer curve to the RGB channels and leaves
+    alpha untouched. GPU overlay colors (hover, edit preview LUT) are written
+    to the display outside color management, so material socket values (which
+    are linear) must be encoded to match how the rendered mesh / swatches look.
+    """
+    result = []
+    for i, component in enumerate(rgba):
+        c = max(0.0, min(1.0, float(component)))
+        if i == 3:
+            result.append(float(rgba[i]))
+        elif c <= 0.0031308:
+            result.append(c * 12.92)
+        else:
+            result.append(1.055 * (c ** (1.0 / 2.4)) - 0.055)
+    return tuple(result)
 
 
 def sync_entry_color_from_material(entry: Any, palette_type: str = "SURFACE") -> None:

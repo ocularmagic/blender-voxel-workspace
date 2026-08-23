@@ -13,7 +13,7 @@ Current release: **0.6.0**.
 - New Surface palettes start with one **Neutral Gray** material; users add additional entries as needed.
 - Add Surface, Add Volume, **Repaint**, Erase, and Stop tools in the bottom Asset Shelf.
 - Surface/Volume N-panel tabs switch the corresponding placement mode, and bottom tools switch the matching palette tab.
-- Material-derived live placement colors that update after Surface or Volume material changes.
+- Material-derived live placement colors that update after Surface or Volume material changes, displayed in the correct sRGB color space so the workspace overlay matches the palette swatches and the rendered mesh.
 - Blender-native material previews and editable Principled shader inputs in the Voxel Palette panel.
 - Palette panel action buttons arranged two-per-row (Pick + Add, Compact + Sort) for readability.
 - **Fill Interior** fills every voxel with no exposed face — buried solid voxels and enclosed air pockets of any size — with the active palette color, leaving the surface shell untouched.

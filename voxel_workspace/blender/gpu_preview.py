@@ -35,14 +35,14 @@ def _build_default_palette_rgba_lut() -> np.ndarray:
 
 def build_typed_palette_lut(entries: Any, volume_alpha: Optional[float] = None) -> np.ndarray:
     """Build one independent 256-row display LUT from a typed palette collection."""
-    from .material_domains import display_rgba_from_entry
+    from .material_domains import display_rgba_from_entry, linear_to_srgb_rgba
     lut = np.zeros((256, 4), dtype=np.float32)
     palette_type = "VOLUME" if volume_alpha is not None else "SURFACE"
     for palette_entry in entries:
         idx = int(palette_entry.index)
         if not (1 <= idx <= 255):
             continue
-        color = np.asarray(display_rgba_from_entry(palette_entry, palette_type), dtype=np.float32).copy()
+        color = np.asarray(linear_to_srgb_rgba(display_rgba_from_entry(palette_entry, palette_type)), dtype=np.float32).copy()
         if volume_alpha is not None:
             color[3] = float(volume_alpha)
         lut[idx] = color
