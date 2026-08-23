@@ -8,6 +8,7 @@ from .edit_session import (
     VOXEL_OT_start_volume,
     VOXEL_OT_start_place,
     VOXEL_OT_start_erase,
+    VOXEL_OT_start_repaint,
     VOXEL_OT_stop_editing,
     EDIT_SESSION_OPERATOR_CLASSES,
 )
@@ -61,6 +62,7 @@ __all__ = [
     "VOXEL_OT_start_volume",
     "VOXEL_OT_start_place",
     "VOXEL_OT_start_erase",
+    "VOXEL_OT_start_repaint",
     "VOXEL_OT_stop_editing",
     "VOXEL_OT_brush",
     "VOXEL_OT_select_palette_color",

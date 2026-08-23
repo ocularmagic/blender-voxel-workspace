@@ -139,6 +139,31 @@ class VOXEL_OT_start_erase(Operator):
         return _start_brush(context, self, 'ERASE')
 
 
+class VOXEL_OT_start_repaint(Operator):
+    """Start repainting existing voxels to the active palette material."""
+    bl_idname = "voxel.start_repaint"
+    bl_label = "Start Repaint"
+    bl_description = "Start interactive modal voxel repaint tool"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context: Any) -> bool:
+        if context is None:
+            return False
+        return is_valid_voxel_object(context)
+
+    def execute(self, context: Any) -> set:
+        if bpy is None or context is None:
+            return {'CANCELLED'}
+
+        v_ctx = resolve_volume_context(context)
+        if v_ctx is None or not v_ctx.mesh_uuid:
+            self.report({'ERROR'}, "Active object is not a valid voxel volume")
+            return {'CANCELLED'}
+
+        return _start_brush(context, self, 'REPAINT')
+
+
 class VOXEL_OT_stop_editing(Operator):
     """Stop active voxel editing session and restore view overlays."""
     bl_idname = "voxel.stop_editing"
@@ -159,5 +184,6 @@ EDIT_SESSION_OPERATOR_CLASSES = [
     VOXEL_OT_start_volume,
     VOXEL_OT_start_place,
     VOXEL_OT_start_erase,
+    VOXEL_OT_start_repaint,
     VOXEL_OT_stop_editing,
 ]

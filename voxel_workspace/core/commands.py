@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, List, Set, Union
+from typing import Dict, List, Optional, Set, Union
 
 from ..constants import BRICK_SIZE, BrickCoord, VoxelCoord
 from .coords import split_coord
@@ -12,8 +12,14 @@ def apply_brush_value(
     coord: VoxelCoord,
     mode: str,
     palette_index: int,
+    domain: Optional[VoxelDomain] = None,
 ) -> VoxelCell:
-    """Apply one explicit tagged brush mode and return the canonical new cell."""
+    """Apply one explicit tagged brush mode and return the canonical new cell.
+
+    ``domain`` is required for REPAINT: it carries the active palette tab's
+    domain so the painted voxel is converted to that material family rather
+    than preserving whatever it was before.
+    """
     normalized = str(mode).upper()
     if normalized == "ADD_SURFACE":
         cell = VoxelCell(VoxelDomain.SURFACE, palette_index)
@@ -21,6 +27,14 @@ def apply_brush_value(
         cell = VoxelCell(VoxelDomain.VOLUME, palette_index)
     elif normalized == "ERASE":
         cell = CELL_EMPTY
+    elif normalized == "REPAINT":
+        existing = grid.get_cell(coord)
+        if existing == CELL_EMPTY:
+            # Repaint never creates voxels; leave empty cells alone.
+            return CELL_EMPTY
+        if domain is None:
+            raise ValueError("REPAINT requires a target domain")
+        cell = VoxelCell(domain, palette_index)
     else:
         raise ValueError(f"Unknown brush mode: {mode}")
     grid.set_cell(coord, cell.domain, cell.index)

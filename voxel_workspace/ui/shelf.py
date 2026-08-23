@@ -18,6 +18,7 @@ _SHELF_PREVIEW_SIZE = 48
 SHELF_TOOLS = (
     ("ADD_SURFACE", "Voxel Add Surface", "voxeladdsurface.png"),
     ("ADD_VOLUME", "Voxel Add Volume", "voxeladdvolume.png"),
+    ("REPAINT", "Voxel Repaint", "voxelpaint.png"),
     ("ERASE", "Voxel Erase", "voxelerase.png"),
     ("STOP", "Voxel Stop Editing", "voxelstop.png"),
 )

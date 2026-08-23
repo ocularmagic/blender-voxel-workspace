@@ -106,6 +106,7 @@ def compute_brush_target(
     mode_upper = mode.upper()
     is_add = mode_upper in ("PLACE", "ADD_SURFACE", "ADD_VOLUME", "SURFACE", "VOLUME")
     is_erase = mode_upper in ("ERASE", "ERASE_VOXEL")
+    is_repaint = mode_upper == "REPAINT"
 
     hit = trace_grid(grid, origin_grid, direction_grid, max_distance=max_distance)
     if hit is not None:
@@ -119,7 +120,7 @@ def compute_brush_target(
                 target = clamp_to_extent(grid, target)
             contact_normal = tuple(-component for component in hit.normal)
             return target, target, contact_normal
-        elif is_erase:
+        elif is_erase or is_repaint:
             return hit.cell, hit.cell, hit.normal
 
     if is_add:

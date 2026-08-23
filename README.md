@@ -2,7 +2,7 @@
 
 Voxel Workspace is an installable Blender **5.2** extension for authoring independent, bounded Surface and Volume voxel fields directly in Blender.
 
-Current release: **0.5.0**.
+Current release: **0.6.0**.
 
 ## Features
 
@@ -11,12 +11,13 @@ Current release: **0.5.0**.
 - Tagged per-cell authority: Empty, Surface palette index, or Volume palette index.
 - Independent Surface and Volume palettes with native Blender materials.
 - New Surface palettes start with one **Neutral Gray** material; users add additional entries as needed.
-- Add Surface, Add Volume, Erase, and Stop tools in the bottom Asset Shelf.
+- Add Surface, Add Volume, **Repaint**, Erase, and Stop tools in the bottom Asset Shelf.
 - Surface/Volume N-panel tabs switch the corresponding placement mode, and bottom tools switch the matching palette tab.
 - Material-derived live placement colors that update after Surface or Volume material changes.
 - Blender-native material previews and editable Principled shader inputs in the Voxel Palette panel.
 - Palette panel action buttons arranged two-per-row (Pick + Add, Compact + Sort) for readability.
 - **Fill Interior** fills every voxel with no exposed face — buried solid voxels and enclosed air pockets of any size — with the active palette color, leaving the surface shell untouched.
+- **Repaint** brushes the active palette material onto existing voxels, converting them to the active tab's type (Surface or Volume), one Undo step per drag.
 - Mouse-driven one-voxel strokes with one Blender Undo step per completed drag; `Esc` cancels an in-progress drag.
 - Object-local 3D DDA picking with a Z=0 work-plane fallback for empty fields.
 - Per-brick, depth-aware GPU editing previews and voxel-cell outlines on OpenGL and Vulkan.
@@ -32,7 +33,7 @@ Current release: **0.5.0**.
 
 ## Install
 
-1. Download or build `voxel_workspace-0.5.0.zip`.
+1. Download or build `voxel_workspace-0.6.0.zip`.
 2. In Blender, open **Edit → Preferences → Get Extensions**.
 3. Open the repository menu and choose **Install from Disk…**.
 4. Select the ZIP and enable **Voxel Workspace** if Blender does not enable it automatically.
@@ -43,7 +44,7 @@ For development builds:
 python build_zip.py
 ```
 
-The deterministic build script writes `dist/voxel_workspace-0.5.0.zip`.
+The deterministic build script writes `dist/voxel_workspace-0.6.0.zip`.
 
 Blender's extension builder is also supported:
 
@@ -61,7 +62,7 @@ Blender's extension builder is also supported:
 3. Select **Surface** or **Volume**. This activates the matching placement mode.
 4. Choose or add a palette material and edit its native Blender shader properties.
 5. Move the pointer over the field to preview the target, then drag with **LMB** to place voxels.
-6. Select **Erase** in the bottom Asset Shelf to remove whichever tagged voxel is hit.
+6. Select **Erase** in the bottom Asset Shelf to remove whichever tagged voxel is hit, or **Repaint** to recolor existing voxels to the active palette material.
 7. Release LMB to commit the drag as one Undo step.
 8. Press **Esc while dragging** to cancel that drag, or **Esc while idle** to stop editing.
 
@@ -92,7 +93,7 @@ Run the unit suite:
 uv run pytest -q
 ```
 
-Current result: **92 passed** on Blender Workspace release `0.5.0` source.
+Current result: **92 passed** on Blender Workspace release `0.6.0` source.
 
 Blender integration and acceptance scripts are under `tests/blender/`. The verified commands and artifact list are documented in [`tests/ACCEPTANCE.md`](tests/ACCEPTANCE.md). Architecture decisions and current validation status are documented in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 

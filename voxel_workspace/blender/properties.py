@@ -339,6 +339,7 @@ class VoxelSceneProperties(PropertyGroup):
                 ("NONE", "None", "No voxel brush is active"),
                 ("ADD_SURFACE", "Add Surface", "Surface brush is active"),
                 ("ADD_VOLUME", "Add Volume", "Volume brush is active"),
+                ("REPAINT", "Repaint", "Repaint brush is active"),
                 ("ERASE", "Erase", "Erase brush is active"),
                 ("PLACE", "Legacy Place", "Compatibility alias for Add Surface"),
             ],

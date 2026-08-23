@@ -119,6 +119,12 @@ def brush_cell_for_scene(scene: Any, mode: str) -> VoxelCell:
         return VoxelCell(VoxelDomain.SURFACE, int(props.active_surface_palette_index))
     if normalized == 'ADD_VOLUME':
         return VoxelCell(VoxelDomain.VOLUME, int(props.active_volume_palette_index))
+    if normalized == 'REPAINT':
+        # Repaint converts the target voxel to the material family of the
+        # active palette tab (SURFACE or VOLUME).
+        if str(getattr(props, 'active_palette_tab', 'SURFACE')).upper() == 'VOLUME':
+            return VoxelCell(VoxelDomain.VOLUME, int(props.active_volume_palette_index))
+        return VoxelCell(VoxelDomain.SURFACE, int(props.active_surface_palette_index))
     if normalized == 'ERASE':
         return CELL_EMPTY
     raise ValueError(f"Unknown brush mode: {mode}")
@@ -129,7 +135,10 @@ def brush_display_color_for_scene(scene: Any, mesh: Any, mode: str) -> Tuple[flo
     normalized = str(mode).upper()
     if normalized == "ERASE":
         return (1.0, 0.2, 0.2, 0.6)
-    palette_type = "VOLUME" if normalized == "ADD_VOLUME" else "SURFACE"
+    if normalized == "REPAINT":
+        palette_type = "VOLUME" if brush_cell_for_scene(scene, normalized).domain == VoxelDomain.VOLUME else "SURFACE"
+    else:
+        palette_type = "VOLUME" if normalized == "ADD_VOLUME" else "SURFACE"
     fallback = (0.25, 0.65, 1.0, 0.45) if palette_type == "VOLUME" else (1.0, 0.9, 0.2, 0.6)
     if scene is None or mesh is None:
         return fallback
@@ -435,7 +444,7 @@ class BrushSession:
             if target_cell is not None:
                 self.stroke.record(entry.grid, target_cell, cell)
                 if isinstance(entry.grid, TaggedVoxelGrid):
-                    apply_brush_value(entry.grid, target_cell, 'ADD_SURFACE' if self.mode == 'PLACE' else self.mode, cell.index)
+                    apply_brush_value(entry.grid, target_cell, 'ADD_SURFACE' if self.mode == 'PLACE' else self.mode, cell.index, domain=cell.domain)
                 else:
                     entry.grid.set(target_cell, cell.index)
                 entry.dirty_bricks.add(split_coord(target_cell, entry.grid.brick_size)[0])
@@ -456,7 +465,7 @@ class BrushSession:
                         if entry.grid.in_extent(c):
                             self.stroke.record(entry.grid, c, cell)
                             if isinstance(entry.grid, TaggedVoxelGrid):
-                                apply_brush_value(entry.grid, c, 'ADD_SURFACE' if self.mode == 'PLACE' else self.mode, cell.index)
+                                apply_brush_value(entry.grid, c, 'ADD_SURFACE' if self.mode == 'PLACE' else self.mode, cell.index, domain=cell.domain)
                             else:
                                 entry.grid.set(c, cell.index)
                             entry.dirty_bricks.add(split_coord(c, entry.grid.brick_size)[0])
@@ -466,7 +475,7 @@ class BrushSession:
                 elif self.last_target is None:
                     self.stroke.record(entry.grid, target_cell, cell)
                     if isinstance(entry.grid, TaggedVoxelGrid):
-                        apply_brush_value(entry.grid, target_cell, 'ADD_SURFACE' if self.mode == 'PLACE' else self.mode, cell.index)
+                        apply_brush_value(entry.grid, target_cell, 'ADD_SURFACE' if self.mode == 'PLACE' else self.mode, cell.index, domain=cell.domain)
                     else:
                         entry.grid.set(target_cell, cell.index)
                     entry.dirty_bricks.add(split_coord(target_cell, entry.grid.brick_size)[0])
@@ -532,6 +541,7 @@ class VOXEL_OT_brush(Operator):
             items=[
                 ('ADD_SURFACE', 'Add Surface', 'Add Surface voxels'),
                 ('ADD_VOLUME', 'Add Volume', 'Add Volume voxels'),
+                ('REPAINT', 'Repaint', 'Repaint existing voxels to the active palette material'),
                 ('ERASE', 'Erase', 'Erase voxels'),
             ],
             default='ADD_SURFACE',

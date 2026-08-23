@@ -13,6 +13,7 @@ except ImportError:
 _TOOL_OPERATORS = {
     "ADD_SURFACE": "voxel.start_surface",
     "ADD_VOLUME": "voxel.start_volume",
+    "REPAINT": "voxel.start_repaint",
     "ERASE": "voxel.start_erase",
     "STOP": "voxel.stop_editing",
 }
@@ -21,6 +22,7 @@ _TOOL_OPERATORS = {
 _TOOL_NAMES = {
     "Voxel Add Surface": "ADD_SURFACE",
     "Voxel Add Volume": "ADD_VOLUME",
+    "Voxel Repaint": "REPAINT",
     "Voxel Erase": "ERASE",
     "Voxel Stop Editing": "STOP",
 }
