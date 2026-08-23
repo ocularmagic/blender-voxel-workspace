@@ -1241,6 +1241,219 @@ class VOXEL_OT_sort_palette_color(Operator):
         return {'FINISHED'}
 
 
+# ---------------------------------------------------------------------------
+# Fill Interior
+# ---------------------------------------------------------------------------
+def _dense_occupancy_mask(grid: Any):
+    """Return (mask, lo) over the occupied-bounding-box padded by 1 voxel.
+
+    ``mask`` is a bool (uint8) array in the volume's grid-index space restricted
+    to the smallest axis-aligned box enclosing every occupied cell, expanded by
+    one cell on each side and clamped to the volume extent. ``lo`` is the global
+    voxel coordinate of mask[0, 0, 0]. Returns (None, None) if nothing occupied.
+    """
+    from ..core.coords import join_coord
+    import numpy as _np
+
+    occupied_coords: List[Tuple[int, int, int]] = []
+    bs = int(grid.brick_size)
+    for bcoord, brick in grid.bricks.items():
+        nz = _np.argwhere(brick.indices > 0)
+        for lc in nz:
+            occupied_coords.append(join_coord(bcoord, (int(lc[0]), int(lc[1]), int(lc[2])), bs))
+    if not occupied_coords:
+        return None, None
+
+    arr = _np.asarray(occupied_coords, dtype=_np.int64)
+    mn = arr.min(axis=0)
+    mx = arr.max(axis=0)
+    emin = _np.asarray(grid.extent_min, dtype=_np.int64)
+    emax = _np.asarray(grid.extent_max_exclusive, dtype=_np.int64)
+    lo = _np.maximum(mn - 1, emin)
+    hi = _np.minimum(mx + 2, emax)
+    if _np.any(hi - lo <= 0):
+        return None, None
+    shape = tuple(int(v) for v in (hi - lo))
+    mask = _np.zeros(shape, dtype=_np.uint8)
+    for bcoord, brick in grid.bricks.items():
+        nz = _np.argwhere(brick.indices > 0)
+        if len(nz) == 0:
+            continue
+        gc = _np.stack([join_coord(bcoord, (int(lc[0]), int(lc[1]), int(lc[2])), bs) for lc in nz])
+        rel = gc - lo[None, :]
+        mask[rel[:, 0], rel[:, 1], rel[:, 2]] = 1
+    return mask, tuple(int(v) for v in lo)
+
+
+def _exterior_air_mask(mask: Any):
+    """Flood-fill empty cells reachable from the padded region's perimeter.
+
+    A cell is "exterior air" if it is empty and connected to the boundary of the
+    padded box through other empty cells (i.e. it can reach outside the volume).
+    """
+    from collections import deque
+    import numpy as _np
+
+    shape = mask.shape
+    air = _np.zeros(shape, dtype=bool)
+    q: deque = deque()
+
+    def _seed(x: int, y: int, z: int) -> None:
+        if mask[x, y, z] == 0 and not air[x, y, z]:
+            air[x, y, z] = True
+            q.append((x, y, z))
+
+    nx, ny, nz = shape
+    for y in range(ny):
+        for z in range(nz):
+            _seed(0, y, z)
+            _seed(nx - 1, y, z)
+    for x in range(nx):
+        for z in range(nz):
+            _seed(x, 0, z)
+            _seed(x, ny - 1, z)
+    for x in range(nx):
+        for y in range(ny):
+            _seed(x, y, 0)
+            _seed(x, y, nz - 1)
+
+    while q:
+        x, y, z = q.popleft()
+        for dx, dy, dz in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)):
+            nx_, ny_, nz_ = x + dx, y + dy, z + dz
+            if nx_ < 0 or ny_ < 0 or nz_ < 0 or nx_ >= nx or ny_ >= ny or nz_ >= nz:
+                continue
+            if air[nx_, ny_, nz_] or mask[nx_, ny_, nz_] != 0:
+                continue
+            air[nx_, ny_, nz_] = True
+            q.append((nx_, ny_, nz_))
+    return air
+
+
+def _interior_target_mask(grid: Any):
+    """Return (target_mask, lo) for voxels that have no exposed face.
+
+    A cell is interior if it either (a) is an occupied voxel with no face
+    bordering exterior air (a buried solid voxel), or (b) is an empty cell
+    enclosed by solid with no path to the volume boundary (an enclosed void).
+    Surface solids (any face touching outside air) are excluded.
+    """
+    import numpy as _np
+
+    mask, lo = _dense_occupancy_mask(grid)
+    if mask is None:
+        return None, None
+    air = _exterior_air_mask(mask)
+
+    solid = mask > 0
+
+    # touches exterior if any 6-neighbor is air, or the cell is on the region's
+    # perimeter (which borders the volume boundary / outside).
+    nb = _np.zeros_like(air, dtype=bool)
+    nb[:-1, :, :] |= air[1:, :, :]
+    nb[1:, :, :] |= air[:-1, :, :]
+    nb[:, :-1, :] |= air[:, 1:, :]
+    nb[:, 1:, :] |= air[:, :-1, :]
+    nb[:, :, :-1] |= air[:, :, 1:]
+    nb[:, :, 1:] |= air[:, :, :-1]
+    nb[0, :, :] = True
+    nb[-1, :, :] = True
+    nb[:, 0, :] = True
+    nb[:, -1, :] = True
+    nb[:, :, 0] = True
+    nb[:, :, -1] = True
+
+    interior_solid = solid & ~nb          # buried solid voxels
+    enclosed_void = (~solid) & (~air)     # enclosed air pockets of any size
+    target = interior_solid | enclosed_void
+    return target, lo
+
+
+class VOXEL_OT_fill_interior(Operator):
+    """Fill every interior voxel and enclosed void with the active palette color."""
+    bl_idname = "voxel.fill_interior"
+    bl_label = "Fill Interior"
+    bl_description = "Recolor buried voxels and fill enclosed air pockets with the active palette color"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    if bpy is not None:
+        palette_type: EnumProperty(
+            name="Palette Type",
+            items=[
+                ("SURFACE", "Surface", "Surface Palette"),
+                ("VOLUME", "Volume", "Volume Palette"),
+            ],
+            default="SURFACE",
+        )
+
+    def execute(self, context):
+        v_ctx = resolve_volume_context(context)
+        if v_ctx is None or v_ctx.mesh is None:
+            self.report({'WARNING'}, "No active voxel volume")
+            return {'CANCELLED'}
+
+        mesh = v_ctx.mesh
+        pal_type = getattr(self, "palette_type", "SURFACE").upper()
+        scene = context.scene
+        index = int(
+            scene.voxel_workspace.active_volume_palette_index
+            if pal_type == "VOLUME"
+            else scene.voxel_workspace.active_surface_palette_index
+        )
+        if index < 1:
+            self.report({'WARNING'}, f"Select a {pal_type.lower()} palette color first")
+            return {'CANCELLED'}
+
+        entry = get_or_load(mesh)
+        if entry is None or entry.grid is None:
+            self.report({'WARNING'}, "Volume has no grid data")
+            return {'CANCELLED'}
+        grid = entry.grid
+
+        target, lo = _interior_target_mask(grid)
+        if target is None or not bool(target.any()):
+            self.report({'INFO'}, f"No interior voxels to fill for {pal_type.lower()} palette")
+            return {'CANCELLED'}
+
+        from ..core.tagged_grid import VoxelDomain
+        from ..core.coords import join_coord
+
+        domain = VoxelDomain.VOLUME if pal_type == "VOLUME" else VoxelDomain.SURFACE
+        coords = np.argwhere(target)
+        changed_bricks: Set[BrickCoord] = set()
+        for c in coords:
+            global_c = (int(lo[0]) + int(c[0]), int(lo[1]) + int(c[1]), int(lo[2]) + int(c[2]))
+            grid.set_cell(global_c, domain, index)
+            bcoord, _ = split_coord(global_c, int(grid.brick_size))
+            changed_bricks.add(bcoord)
+        if not changed_bricks:
+            self.report({'INFO'}, "No interior voxels changed")
+            return {'CANCELLED'}
+
+        from ..blender.persistence import serialize_volume
+        serialize_volume(mesh, grid, dirty_only=True)
+        from ..blender.mesh_sync import sync_volume_mesh
+        sync_volume_mesh(
+            mesh,
+            grid=grid,
+            dirty_only=True,
+            dirty_bricks=changed_bricks,
+            voxel_size=entry.voxel_size,
+            mesher=mesh_visible_faces,
+        )
+        update_volume_gpu_preview(entry, dirty_only=True, dirty_bricks=changed_bricks)
+        tag_redraw_all_viewports()
+
+        count = int(len(coords))
+        if bpy is not None and hasattr(bpy.ops, "ed") and hasattr(bpy.ops.ed, "undo_push"):
+            try:
+                bpy.ops.ed.undo_push(message=f"Fill Interior ({pal_type.title()})")
+            except Exception:
+                pass
+        self.report({'INFO'}, f"Filled {count} interior voxels")
+        return {'FINISHED'}
+
+
 class VOXEL_OT_save_palette_preset(Operator):
     """Save the active volume's palette to a JSON preset file."""
     bl_idname = "voxel.save_palette_preset"
@@ -1593,6 +1806,7 @@ PALETTE_OPERATOR_CLASSES = [
     VOXEL_OT_eyedropper,
     VOXEL_OT_compact_palette,
     VOXEL_OT_sort_palette_color,
+    VOXEL_OT_fill_interior,
     VOXEL_OT_save_palette_preset,
     VOXEL_OT_load_palette_preset,
 ]

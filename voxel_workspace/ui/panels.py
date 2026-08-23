@@ -165,15 +165,21 @@ def draw_typed_palette(
     )
     volume_tab.palette_type = "VOLUME"
 
-    header = layout.row()
     if is_voxel and mesh is not None:
-        op_pick = header.operator("voxel.eyedropper", text="Pick", icon='EYEDROPPER')
-        op_add = header.operator("voxel.add_palette_color", text="Add", icon='ADD')
+        row1 = layout.row(align=True)
+        op_pick = row1.operator("voxel.eyedropper", text="Pick", icon='EYEDROPPER')
+        op_add = row1.operator("voxel.add_palette_color", text="Add", icon='ADD')
         op_add.palette_type = pal_tab
-        op_comp = header.operator("voxel.compact_palette", text="Compact", icon='ALIGN_JUSTIFY')
+
+        row2 = layout.row(align=True)
+        op_comp = row2.operator("voxel.compact_palette", text="Compact", icon='ALIGN_JUSTIFY')
         op_comp.palette_type = pal_tab
-        op_sort = header.operator("voxel.sort_palette_color", text="Sort", icon='SORT_ASC')
+        op_sort = row2.operator("voxel.sort_palette_color", text="Sort", icon='SORT_ASC')
         op_sort.palette_type = pal_tab
+
+        fill_row = layout.row(align=True)
+        op_fill = fill_row.operator("voxel.fill_interior", text="Fill Interior", icon='ADD')
+        op_fill.palette_type = pal_tab
 
     active_index = (
         palette_props.active_volume_palette_index

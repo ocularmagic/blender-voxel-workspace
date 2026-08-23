@@ -2,7 +2,7 @@
 
 Voxel Workspace is an installable Blender **5.2** extension for authoring independent, bounded Surface and Volume voxel fields directly in Blender.
 
-Current release: **0.2.15**.
+Current release: **0.5.0**.
 
 ## Features
 
@@ -15,6 +15,8 @@ Current release: **0.2.15**.
 - Surface/Volume N-panel tabs switch the corresponding placement mode, and bottom tools switch the matching palette tab.
 - Material-derived live placement colors that update after Surface or Volume material changes.
 - Blender-native material previews and editable Principled shader inputs in the Voxel Palette panel.
+- Palette panel action buttons arranged two-per-row (Pick + Add, Compact + Sort) for readability.
+- **Fill Interior** fills every voxel with no exposed face — buried solid voxels and enclosed air pockets of any size — with the active palette color, leaving the surface shell untouched.
 - Mouse-driven one-voxel strokes with one Blender Undo step per completed drag; `Esc` cancels an in-progress drag.
 - Object-local 3D DDA picking with a Z=0 work-plane fallback for empty fields.
 - Per-brick, depth-aware GPU editing previews and voxel-cell outlines on OpenGL and Vulkan.
@@ -30,7 +32,7 @@ Current release: **0.2.15**.
 
 ## Install
 
-1. Download or build `voxel_workspace-0.2.15.zip`.
+1. Download or build `voxel_workspace-0.5.0.zip`.
 2. In Blender, open **Edit → Preferences → Get Extensions**.
 3. Open the repository menu and choose **Install from Disk…**.
 4. Select the ZIP and enable **Voxel Workspace** if Blender does not enable it automatically.
@@ -41,7 +43,7 @@ For development builds:
 python build_zip.py
 ```
 
-The deterministic build script writes `dist/voxel_workspace-0.2.15.zip`.
+The deterministic build script writes `dist/voxel_workspace-0.5.0.zip`.
 
 Blender's extension builder is also supported:
 
@@ -64,6 +66,8 @@ Blender's extension builder is also supported:
 8. Press **Esc while dragging** to cancel that drag, or **Esc while idle** to stop editing.
 
 MMB, wheel, numpad navigation, Ctrl+Z, and Ctrl+Shift+Z pass through to Blender. Each placement drag targets the field state that existed when the drag began, preventing newly placed voxels from stacking toward the camera.
+
+In the **Voxel Palette** panel, select a color then click **Fill Interior** to recolor every buried voxel and fill all enclosed air pockets (hollow interiors, voids) with that color. Voxels with any exposed face are left untouched. The button fills using the active palette tab's selected color.
 
 Use **Show Voxel Edges** in the Voxel panel to toggle editing outlines. This affects the live editing preview, not EEVEE or Cycles renders.
 
@@ -88,7 +92,7 @@ Run the unit suite:
 uv run pytest -q
 ```
 
-Current result: **92 passed** on Blender Workspace release `0.2.15` source.
+Current result: **92 passed** on Blender Workspace release `0.5.0` source.
 
 Blender integration and acceptance scripts are under `tests/blender/`. The verified commands and artifact list are documented in [`tests/ACCEPTANCE.md`](tests/ACCEPTANCE.md). Architecture decisions and current validation status are documented in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
