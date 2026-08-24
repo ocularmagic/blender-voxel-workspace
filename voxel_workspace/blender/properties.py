@@ -53,6 +53,17 @@ def _display_changed(_self, _context):
     tag_redraw_all_viewports()
 
 
+def _surface_render_settings_changed(self, _context):
+    """Update render-only Surface shader attributes for this voxel object."""
+    if bpy is None:
+        return
+    try:
+        from .surface_edges import sync_surface_edge_settings_from_object
+        sync_surface_edge_settings_from_object(getattr(self, "id_data", None))
+    except Exception:
+        pass
+
+
 def _palette_color_updated(self, _context):
     """Callback when a palette entry's color is modified.
     
@@ -226,6 +237,20 @@ class VoxelObjectProperties(PropertyGroup):
             name="Voxel Render Role",
             description="Render role: SURFACE or VOLUME",
             default="",
+        )
+        show_rendered_surface_edges: BoolProperty(
+            name="Show Rendered Surface Edges",
+            description="Show grey voxel edges in final camera renders",
+            default=False,
+            update=_surface_render_settings_changed,
+        )
+        rendered_surface_edge_width: FloatProperty(
+            name="Rendered Edge Width",
+            description="Rendered Surface edge width as a fraction of one voxel",
+            default=0.04,
+            min=0.001,
+            max=0.45,
+            update=_surface_render_settings_changed,
         )
         surface_object: PointerProperty(
             type=bpy.types.Object,

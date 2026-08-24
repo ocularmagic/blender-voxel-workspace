@@ -361,6 +361,15 @@ def _draw_volume_settings(layout: Any, context: Any) -> None:
         info_col.label(text=f"Dimensions: {dim_x} × {dim_y} × {dim_z}")
         info_col.label(text=f"Voxel Size: {props.voxel_size:.4g}")
 
+        root_props = getattr(v_ctx.root, "voxel_workspace", None) if v_ctx.root is not None else None
+        if root_props is not None:
+            edge_box = vol_box.box()
+            edge_box.label(text="Rendered Surface Edges", icon="MOD_BEVEL")
+            edge_box.prop(root_props, "show_rendered_surface_edges", text="Show in Final Render")
+            width_row = edge_box.row()
+            width_row.enabled = bool(root_props.show_rendered_surface_edges)
+            width_row.prop(root_props, "rendered_surface_edge_width", text="Width")
+
         vol_uuid = props.uuid
         entry = get_volume(vol_uuid) if vol_uuid else None
         if entry is not None:

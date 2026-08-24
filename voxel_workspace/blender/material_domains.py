@@ -491,6 +491,8 @@ def reconcile_surface_slots(mesh: Any, grid: Any) -> Dict[int, int]:
     if not surface_indices:
         # No surface voxels used; clear materials
         mesh.materials.clear()
+        from .surface_edges import sync_surface_edge_materials
+        sync_surface_edge_materials(mesh)
         return slot_map
 
     # Build entry lookup from surface_palette
@@ -512,6 +514,8 @@ def reconcile_surface_slots(mesh: Any, grid: Any) -> Dict[int, int]:
         mesh.materials.append(mat)
         slot_map[pal_idx] = slot_idx
 
+    from .surface_edges import sync_surface_edge_materials
+    sync_surface_edge_materials(mesh)
     return slot_map
 
 

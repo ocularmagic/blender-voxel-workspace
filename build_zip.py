@@ -6,11 +6,14 @@ and timestamps so re-running yields a stable archive.
 """
 import os
 import sys
+import tomllib
 import zipfile
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(ROOT, "voxel_workspace")
-OUT = os.path.join(ROOT, "dist", "voxel_workspace-0.2.15.zip")
+with open(os.path.join(SRC, "blender_manifest.toml"), "rb") as manifest_file:
+    VERSION = tomllib.load(manifest_file)["version"]
+OUT = os.path.join(ROOT, "dist", f"voxel_workspace-{VERSION}.zip")
 
 # Fixed timestamp keeps the archive reproducible.
 FIXED_DT = (2026, 8, 22, 8, 45, 0)

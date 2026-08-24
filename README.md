@@ -2,7 +2,7 @@
 
 Voxel Workspace is an installable Blender **5.2** extension for authoring independent, bounded Surface and Volume voxel fields directly in Blender.
 
-Current release: **0.7.0**.
+Current release: **0.8.0**.
 
 ## Features
 
@@ -19,6 +19,7 @@ Current release: **0.7.0**.
 - **Merge selected colors** collapses similar Surface or Volume palette entries with median-cut. Click a chip to paint; **Ctrl+click** adds chips to the merge set (the paint color is included automatically); **Shift+click** toggles the range from the paint color to the clicked chip. **Merge to…** remaps voxels onto the survivors and leaves emptied slots for Compact to purge.
 - **Fill Interior** fills every voxel with no exposed face — buried solid voxels and enclosed air pockets of any size — with the active palette color, leaving the surface shell untouched.
 - **Repaint** brushes the active palette material onto existing voxels, converting them to the active tab's type (Surface or Volume), one Undo step per drag.
+- Optional grey Surface voxel edges in final camera renders, generated procedurally in Surface materials; Volume materials and proxies are untouched.
 - Mouse-driven one-voxel strokes with one Blender Undo step per completed drag; `Esc` cancels an in-progress drag.
 - Object-local 3D DDA picking with a Z=0 work-plane fallback for empty fields.
 - Per-brick, depth-aware GPU editing previews and voxel-cell outlines on OpenGL and Vulkan.
@@ -34,7 +35,7 @@ Current release: **0.7.0**.
 
 ## Install
 
-1. Download or build `voxel_workspace-0.7.0.zip`.
+1. Download or build `voxel_workspace-0.8.0.zip`.
 2. In Blender, open **Edit → Preferences → Get Extensions**.
 3. Open the repository menu and choose **Install from Disk…**.
 4. Select the ZIP and enable **Voxel Workspace** if Blender does not enable it automatically.
@@ -45,7 +46,7 @@ For development builds:
 python build_zip.py
 ```
 
-The deterministic build script writes `dist/voxel_workspace-0.7.0.zip`.
+The deterministic build script writes `dist/voxel_workspace-0.8.0.zip`.
 
 Blender's extension builder is also supported:
 
@@ -74,6 +75,8 @@ In the **Voxel Palette** panel, select a color then click **Fill Interior** to r
 To collapse similar imported or painted colors, **Ctrl+click** or **Shift+click** chips to build a selection, then **Merge to…** and choose how many of those colors to keep. Compact afterwards to purge the emptied entries.
 
 Use **Show Voxel Edges** in the Voxel panel to toggle editing outlines. This affects the live editing preview, not EEVEE or Cycles renders.
+
+Use **Show in Final Render** under **Rendered Surface Edges** to add thin grey voxel boundaries to camera renders. The effect is a procedural Surface-material overlay and does not scan or rebuild the voxel grid. It is restricted to camera rays; Volume voxel data, Volume materials, and Volume proxy geometry are unchanged.
 
 > **Asset Shelf note:** tool behavior is synchronized with the N-panel, but Blender 5.2 keeps the real Asset Shelf tile's blue active highlight in an internal `AssetWeakReference`. Changing tools from the N-panel cannot programmatically move that highlight for these local Object assets.
 
