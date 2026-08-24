@@ -24,6 +24,10 @@ except ImportError:
 
 from ..constants import DEFAULT_PALETTE
 
+# Blender IntVectorProperty is capped at 32 components. Re-pad to this length
+# on every write or assignment raises ValueError.
+PALETTE_SELECTION_SIZE = 32
+
 
 def _palette_items(self, context):
     from ..ui.palette_icons import palette_enum_items
@@ -285,6 +289,18 @@ class VoxelSceneProperties(PropertyGroup):
             default=1,
             min=1,
             max=255,
+        )
+        surface_palette_selection: IntVectorProperty(
+            name="Surface Palette Selection",
+            description="Multi-selected Surface palette indices (0-padded)",
+            size=PALETTE_SELECTION_SIZE,
+            default=tuple(0 for _ in range(PALETTE_SELECTION_SIZE)),
+        )
+        volume_palette_selection: IntVectorProperty(
+            name="Volume Palette Selection",
+            description="Multi-selected Volume palette indices (0-padded)",
+            size=PALETTE_SELECTION_SIZE,
+            default=tuple(0 for _ in range(PALETTE_SELECTION_SIZE)),
         )
         active_voxel_tool: EnumProperty(
             name="Active Voxel Tool",

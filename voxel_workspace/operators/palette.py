@@ -1,18 +1,18 @@
 """Operators for volume palette management: select, edit, add, duplicate, and remove/remap."""
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 import numpy as np
 
 import colorsys
 
 try:
     import bpy
-    from bpy.props import EnumProperty, FloatVectorProperty, IntProperty, StringProperty
+    from bpy.props import BoolProperty, EnumProperty, FloatVectorProperty, IntProperty, StringProperty
     from bpy.types import Operator
 except ImportError:
     bpy = None
     Operator = object
-    EnumProperty = FloatVectorProperty = IntProperty = StringProperty = None
+    BoolProperty = EnumProperty = FloatVectorProperty = IntProperty = StringProperty = None
 
 from ..constants import BrickCoord, DEFAULT_PALETTE
 from ..core.coords import split_coord
@@ -27,6 +27,7 @@ from ..core.presets import (
 )
 from ..blender.runtime import get_volume, get_or_load, tag_redraw_all_viewports
 from ..blender.object_graph import resolve_volume_context, resolve_authoritative_mesh, resolve_surface_object
+from ..blender.properties import PALETTE_SELECTION_SIZE
 from ..blender.persistence import serialize_volume, commit_volume_state
 from ..blender.gpu_preview import drop_palette_lut, update_volume_gpu_preview
 from ..geometry.visible_faces import mesh_visible_faces
@@ -167,6 +168,265 @@ def reconcile_native_render(mesh: Any) -> None:
     update_volume_gpu_preview(entry, dirty_only=False)
 
 
+def _selection_prop_name(pal_type: str) -> str:
+    return "volume_palette_selection" if str(pal_type).upper() == "VOLUME" else "surface_palette_selection"
+
+
+def get_palette_selection(props: Any, pal_type: str) -> List[int]:
+    """Return sorted unique selected palette indices (zeros stripped)."""
+    if props is None or not hasattr(props, _selection_prop_name(pal_type)):
+        return []
+    seen = set()
+    result: List[int] = []
+    for raw in getattr(props, _selection_prop_name(pal_type)):
+        idx = int(raw)
+        if idx > 0 and idx not in seen:
+            seen.add(idx)
+            result.append(idx)
+    result.sort()
+    return result
+
+
+def set_palette_selection(props: Any, pal_type: str, indices: List[int]) -> None:
+    """Write a 0-padded selection vector. Must stay length PALETTE_SELECTION_SIZE."""
+    if props is None or not hasattr(props, _selection_prop_name(pal_type)):
+        return
+    cleaned: List[int] = []
+    seen = set()
+    for raw in indices:
+        idx = int(raw)
+        if idx > 0 and idx not in seen:
+            seen.add(idx)
+            cleaned.append(idx)
+        if len(cleaned) >= PALETTE_SELECTION_SIZE:
+            break
+    padded = cleaned + [0] * (PALETTE_SELECTION_SIZE - len(cleaned))
+    setattr(props, _selection_prop_name(pal_type), padded)
+
+
+def toggle_palette_selection(props: Any, pal_type: str, index: int) -> List[int]:
+    """Toggle one index in/out of the selection set. Returns the new selection."""
+    idx = int(index)
+    current = get_palette_selection(props, pal_type)
+    if idx in current:
+        current = [item for item in current if item != idx]
+    elif len(current) < PALETTE_SELECTION_SIZE:
+        current.append(idx)
+    set_palette_selection(props, pal_type, current)
+    return get_palette_selection(props, pal_type)
+
+
+def add_palette_selection(props: Any, pal_type: str, indices: Sequence[int]) -> List[int]:
+    """Union indices into the selection set."""
+    current = get_palette_selection(props, pal_type)
+    for raw in indices:
+        idx = int(raw)
+        if idx > 0 and idx not in current and len(current) < PALETTE_SELECTION_SIZE:
+            current.append(idx)
+    set_palette_selection(props, pal_type, current)
+    return get_palette_selection(props, pal_type)
+
+
+def toggle_palette_selection_range(props: Any, pal_type: str, indices: Sequence[int]) -> List[int]:
+    """If every index is already selected, drop the range; otherwise add it."""
+    target = [int(idx) for idx in indices if int(idx) > 0]
+    current = get_palette_selection(props, pal_type)
+    if target and all(idx in current for idx in target):
+        drop = set(target)
+        set_palette_selection(props, pal_type, [idx for idx in current if idx not in drop])
+    else:
+        add_palette_selection(props, pal_type, target)
+    return get_palette_selection(props, pal_type)
+
+
+def current_paint_index(context: Any, pal_type: str) -> int:
+    scene = getattr(context, "scene", None) if context is not None else None
+    if scene is None or not hasattr(scene, "voxel_workspace"):
+        return 1
+    props = scene.voxel_workspace
+    if str(pal_type).upper() == "VOLUME":
+        return int(props.active_volume_palette_index)
+    return int(props.active_surface_palette_index)
+
+
+def visible_palette_indices(context: Any, pal_type: str) -> List[int]:
+    """Chip order as drawn: index-sorted, honoring the Used/All filter."""
+    from ..blender.material_domains import get_palette
+
+    v_ctx = resolve_volume_context(context)
+    if v_ctx is None or v_ctx.mesh is None:
+        return []
+    pal_tab = str(pal_type).upper()
+    entries = sorted(
+        [item for item in get_palette(v_ctx.mesh, pal_tab) if int(item.index) > 0],
+        key=lambda item: int(item.index),
+    )
+    scene = getattr(context, "scene", None)
+    filt = "ALL"
+    if scene is not None and hasattr(scene, "voxel_workspace"):
+        filt = str(getattr(scene.voxel_workspace, "palette_filter", "ALL"))
+    if filt == "USED":
+        counts = get_used_palette_counts(v_ctx.mesh, palette_type=pal_tab)
+        entries = [item for item in entries if counts.get(int(item.index), 0) > 0]
+    return [int(item.index) for item in entries]
+
+
+def palette_index_range(visible: Sequence[int], start: int, end: int) -> List[int]:
+    """Inclusive range between two chips in visible palette order."""
+    start_idx = int(start)
+    end_idx = int(end)
+    visible_list = [int(idx) for idx in visible]
+    if start_idx in visible_list and end_idx in visible_list:
+        i0 = visible_list.index(start_idx)
+        i1 = visible_list.index(end_idx)
+        if i0 > i1:
+            i0, i1 = i1, i0
+        return visible_list[i0 : i1 + 1]
+    lo, hi = min(start_idx, end_idx), max(start_idx, end_idx)
+    return [idx for idx in visible_list if lo <= idx <= hi]
+
+
+def clear_palette_selection(props: Any, pal_type: str) -> None:
+    set_palette_selection(props, pal_type, [])
+
+
+def remap_palette_selection(props: Any, pal_type: str, remap_table: Dict[int, int]) -> None:
+    """Rewrite a selection through an index remap; drop indices that vanished."""
+    current = get_palette_selection(props, pal_type)
+    if not current:
+        return
+    remapped: List[int] = []
+    seen = set()
+    for idx in current:
+        new_idx = int(remap_table.get(idx, 0))
+        if new_idx > 0 and new_idx not in seen:
+            seen.add(new_idx)
+            remapped.append(new_idx)
+    set_palette_selection(props, pal_type, remapped)
+
+
+def _stamp_entry_color(entry: Any, linear_rgba: Sequence[float], pal_type: str) -> None:
+    """Stamp a keeper's stored color and its native material color sockets."""
+    from ..blender.material_domains import (
+        set_generated_surface_base_color,
+        set_generated_volume_color,
+    )
+
+    rgb = (
+        float(linear_rgba[0]),
+        float(linear_rgba[1]),
+        float(linear_rgba[2]),
+        1.0,
+    )
+    try:
+        entry.color = rgb
+    except Exception:
+        pass
+    if str(pal_type).upper() == "VOLUME":
+        set_generated_volume_color(entry, rgb)
+    else:
+        set_generated_surface_base_color(entry, rgb)
+
+
+def _clear_merged_entry(entry: Any) -> Any:
+    """Drop a merged-away entry's material binding. Compact purges the slot."""
+    material = getattr(entry, "material", None)
+    try:
+        entry.material = None
+        entry.material_owned = False
+    except Exception:
+        pass
+    return material
+
+
+def merge_selected_colors(
+    mesh: Any,
+    selected_indices: Sequence[int],
+    palette_type: str = "SURFACE",
+    target_count: Optional[int] = None,
+    weights_from_usage: bool = True,
+    push_undo: bool = False,
+) -> Optional[Dict[int, int]]:
+    """Quantize a selected set of palette indices down to target_count colors.
+
+    Returns the merged-away -> keeper remap table, or None on failure.
+    Merged-away entries are cleared and left for Compact to purge.
+    """
+    from ..core.quantize import quantize_colors_median_cut
+    from ..blender.material_domains import (
+        get_palette,
+        display_rgba_from_entry,
+        cleanup_owned_materials,
+    )
+
+    if not selected_indices:
+        return None
+
+    selected = sorted({int(i) for i in selected_indices if int(i) > 0})
+    if len(selected) < 2:
+        return None
+
+    pal_type = str(palette_type).upper()
+    if target_count is None:
+        target_count = max(1, len(selected) - 1)
+    target_count = max(1, min(int(target_count), len(selected) - 1))
+
+    target_palette = get_palette(mesh, pal_type)
+    entry = {int(item.index): item for item in target_palette if int(item.index) > 0}
+    if not all(idx in entry for idx in selected):
+        return None
+
+    counts = get_used_palette_counts(mesh, palette_type=pal_type) if weights_from_usage else None
+    sel_colors = [display_rgba_from_entry(entry[idx], pal_type) for idx in selected]
+    weights = [float(counts.get(idx, 1.0)) if counts else 1.0 for idx in selected]
+
+    result = quantize_colors_median_cut(
+        colors_rgba_linear=sel_colors,
+        max_colors=target_count,
+        weights=weights,
+        alpha_threshold=0.01,
+    )
+    cluster_of = result.remap_indices
+    if cluster_of is None:
+        return None
+    reps = result.palette
+
+    keepers_seen: Dict[int, int] = {}
+    remap_table: Dict[int, int] = {}
+    dropped_materials = []
+    for i, sel_idx in enumerate(selected):
+        cluster = int(cluster_of[i])
+        if cluster <= 0:
+            continue
+        keeper = keepers_seen.get(cluster)
+        if keeper is None:
+            keepers_seen[cluster] = sel_idx
+            _stamp_entry_color(entry[sel_idx], reps[cluster], pal_type)
+        else:
+            remap_table[sel_idx] = keeper
+            dropped_materials.append(_clear_merged_entry(entry[sel_idx]))
+
+    if not remap_table:
+        return None
+
+    remap_volume_palette_indices(
+        mesh,
+        remap_table,
+        palette_type=pal_type,
+        push_undo=False,
+        undo_message="Merge Palette Colors",
+    )
+    reconcile_native_render(mesh)
+    cleanup_owned_materials(dropped_materials)
+
+    if push_undo and bpy is not None and hasattr(bpy.ops, "ed") and hasattr(bpy.ops.ed, "undo_push"):
+        try:
+            bpy.ops.ed.undo_push(message="Merge Palette Colors")
+        except Exception:
+            pass
+    return remap_table
+
+
 _SWATCH_SYNC_GUARD = False
 
 
@@ -288,7 +548,7 @@ class VOXEL_OT_select_palette_color(Operator):
     """Set the active placement color index."""
     bl_idname = "voxel.select_palette_color"
     bl_label = "Select Color"
-    bl_description = "Set active color for placing voxels"
+    bl_description = "Click to paint. Ctrl-click adds chips. Shift-click selects the range from the paint color"
     bl_options = {'REGISTER'}
 
     if bpy is not None:
@@ -307,13 +567,55 @@ class VOXEL_OT_select_palette_color(Operator):
             min=1,
             max=255,
         )
+        extend: BoolProperty(
+            name="Extend",
+            description="Ctrl: toggle this chip in the merge selection",
+            default=False,
+            options={'SKIP_SAVE', 'HIDDEN'},
+        )
+        select_range: BoolProperty(
+            name="Range",
+            description="Shift: toggle the range from the paint color to this chip",
+            default=False,
+            options={'SKIP_SAVE', 'HIDDEN'},
+        )
+
+    def invoke(self, context, event):
+        shift = bool(getattr(event, "shift", False))
+        ctrl = bool(getattr(event, "ctrl", False))
+        self.select_range = shift
+        self.extend = ctrl and not shift
+        return self.execute(context)
 
     def execute(self, context):
-        apply_active_palette_index(
-            context,
-            getattr(self, "palette_type", "SURFACE"),
-            int(self.index),
-        )
+        pal_type = getattr(self, "palette_type", "SURFACE")
+        clicked = int(self.index)
+        extend = bool(getattr(self, "extend", False))
+        select_range = bool(getattr(self, "select_range", False))
+
+        if not extend and not select_range:
+            apply_active_palette_index(context, pal_type, clicked)
+            return {'FINISHED'}
+
+        scene = getattr(context, "scene", None)
+        if scene is None or not hasattr(scene, "voxel_workspace"):
+            return {'CANCELLED'}
+        props = scene.voxel_workspace
+        paint = current_paint_index(context, pal_type)
+
+        if select_range:
+            visible = visible_palette_indices(context, pal_type)
+            toggle_palette_selection_range(
+                props,
+                pal_type,
+                palette_index_range(visible, paint, clicked),
+            )
+        else:
+            if not get_palette_selection(props, pal_type) and paint != clicked:
+                add_palette_selection(props, pal_type, [paint])
+            toggle_palette_selection(props, pal_type, clicked)
+
+        tag_redraw_all_viewports()
         return {'FINISHED'}
 
 
@@ -890,6 +1192,9 @@ class VOXEL_OT_remove_palette_color(Operator):
                 if 1 <= new_act <= 8:
                     scene.voxel_workspace.active_palette_choice = str(new_act)
 
+        remaining = [idx for idx in get_palette_selection(scene.voxel_workspace, pal_type) if idx != int(self.index)]
+        set_palette_selection(scene.voxel_workspace, pal_type, remaining)
+
         tag_redraw_all_viewports()
         if bpy is not None and hasattr(bpy.ops, "ed") and hasattr(bpy.ops.ed, "undo_push"):
             try:
@@ -1134,6 +1439,8 @@ class VOXEL_OT_compact_palette(Operator):
             if 1 <= new_active <= 8:
                 scene.voxel_workspace.active_palette_choice = str(new_active)
 
+        remap_palette_selection(scene.voxel_workspace, pal_type, remap_table)
+
         tag_redraw_all_viewports()
         if bpy is not None and hasattr(bpy.ops, "ed") and hasattr(bpy.ops.ed, "undo_push"):
             try:
@@ -1183,7 +1490,6 @@ class VOXEL_OT_sort_palette_color(Operator):
             return {'CANCELLED'}
 
         mesh = v_ctx.mesh
-        props = mesh.voxel_workspace
         pal_type = getattr(self, "palette_type", "SURFACE").upper()
         from ..blender.material_domains import get_palette
         from ..blender.properties import ensure_palette
@@ -1216,7 +1522,9 @@ class VOXEL_OT_sort_palette_color(Operator):
             if entry.index in remap_table:
                 entry.index = remap_table[entry.index]
 
-        drop_palette_lut(props.uuid)
+        # Remap syncs the mesh while entries still have old indices, so rebuild
+        # native slots/proxies/LUT from the updated palette.
+        reconcile_native_render(mesh)
 
         # Update active color in scene through the same remap table.
         scene = context.scene
@@ -1231,6 +1539,8 @@ class VOXEL_OT_sort_palette_color(Operator):
             scene.voxel_workspace.active_palette_index = new_active
             if 1 <= new_active <= 8:
                 scene.voxel_workspace.active_palette_choice = str(new_active)
+
+        remap_palette_selection(scene.voxel_workspace, pal_type, remap_table)
 
         tag_redraw_all_viewports()
         if bpy is not None and hasattr(bpy.ops, "ed") and hasattr(bpy.ops.ed, "undo_push"):
@@ -1788,8 +2098,139 @@ class VOXEL_OT_load_palette_preset(Operator):
                 if 1 <= new_active <= 8:
                     scene.voxel_workspace.active_palette_choice = str(new_active)
 
+        if scene and hasattr(scene, "voxel_workspace"):
+            clear_palette_selection(scene.voxel_workspace, pal_type)
+
         tag_redraw_all_viewports()
         self.report({'INFO'}, f"Loaded preset '{preset.name}' ({len(preset.colors)} colors) via {mode}")
+        return {'FINISHED'}
+
+
+class VOXEL_OT_clear_palette_selection(Operator):
+    """Clear the multi-selected palette chips."""
+    bl_idname = "voxel.clear_palette_selection"
+    bl_label = "Clear Palette Selection"
+    bl_description = "Clear the multi-selected palette colors"
+    bl_options = {'REGISTER'}
+
+    if bpy is not None:
+        palette_type: EnumProperty(
+            name="Palette Type",
+            items=[
+                ("SURFACE", "Surface", "Surface Palette"),
+                ("VOLUME", "Volume", "Volume Palette"),
+            ],
+            default="SURFACE",
+        )
+
+    def execute(self, context):
+        scene = getattr(context, "scene", None)
+        if scene is None or not hasattr(scene, "voxel_workspace"):
+            return {'CANCELLED'}
+        clear_palette_selection(scene.voxel_workspace, getattr(self, "palette_type", "SURFACE"))
+        tag_redraw_all_viewports()
+        return {'FINISHED'}
+
+
+class VOXEL_OT_merge_palette_colors(Operator):
+    """Merge selected palette colors down to a target count (median-cut)."""
+    bl_idname = "voxel.merge_palette_colors"
+    bl_label = "Merge Palette Colors"
+    bl_description = "Merge selected palette colors into fewer colors"
+    bl_options = {'REGISTER'}
+
+    if bpy is not None:
+        palette_type: EnumProperty(
+            name="Palette Type",
+            items=[
+                ("SURFACE", "Surface", "Surface Palette"),
+                ("VOLUME", "Volume", "Volume Palette"),
+            ],
+            default="SURFACE",
+        )
+        target_count: IntProperty(
+            name="Merge to",
+            description="Number of colors to keep from the selection",
+            default=1,
+            min=1,
+            max=PALETTE_SELECTION_SIZE - 1,
+        )
+
+    def invoke(self, context, event):
+        v_ctx = resolve_volume_context(context)
+        if v_ctx is None or v_ctx.mesh is None:
+            self.report({'WARNING'}, "No active voxel volume")
+            return {'CANCELLED'}
+        scene = getattr(context, "scene", None)
+        if scene is None or not hasattr(scene, "voxel_workspace"):
+            return {'CANCELLED'}
+        selected = get_palette_selection(scene.voxel_workspace, getattr(self, "palette_type", "SURFACE"))
+        if len(selected) < 2:
+            self.report({'WARNING'}, "Select at least 2 colors to merge")
+            return {'CANCELLED'}
+        self.target_count = max(1, len(selected) - 1)
+        return context.window_manager.invoke_props_dialog(self)
+
+    def draw(self, context):
+        layout = self.layout
+        scene = getattr(context, "scene", None)
+        pal_type = getattr(self, "palette_type", "SURFACE").upper()
+        selected = (
+            get_palette_selection(scene.voxel_workspace, pal_type)
+            if scene is not None and hasattr(scene, "voxel_workspace")
+            else []
+        )
+        count = len(selected)
+        layout.label(text=f"Merge {count} selected colors into fewer?", icon='ERROR')
+        layout.label(text="Voxels are remapped onto the surviving colors.")
+        layout.label(text="Merged-away entries are cleared. Compact can purge them.")
+        layout.prop(self, "target_count")
+
+    def execute(self, context):
+        v_ctx = resolve_volume_context(context)
+        if v_ctx is None or v_ctx.mesh is None:
+            self.report({'WARNING'}, "No active voxel volume")
+            return {'CANCELLED'}
+        scene = getattr(context, "scene", None)
+        if scene is None or not hasattr(scene, "voxel_workspace"):
+            return {'CANCELLED'}
+
+        pal_type = getattr(self, "palette_type", "SURFACE").upper()
+        selected = get_palette_selection(scene.voxel_workspace, pal_type)
+        if len(selected) < 2:
+            self.report({'WARNING'}, "Select at least 2 colors to merge")
+            return {'CANCELLED'}
+
+        target = max(1, min(int(self.target_count), len(selected) - 1))
+        remap_table = merge_selected_colors(
+            v_ctx.mesh,
+            selected,
+            palette_type=pal_type,
+            target_count=target,
+            weights_from_usage=True,
+            push_undo=False,
+        )
+        if not remap_table:
+            self.report({'ERROR'}, "Merge failed")
+            return {'CANCELLED'}
+
+        if pal_type == "VOLUME":
+            old_active = scene.voxel_workspace.active_volume_palette_index
+            if old_active in remap_table:
+                apply_active_palette_index(context, pal_type, remap_table[old_active])
+        else:
+            old_active = scene.voxel_workspace.active_surface_palette_index
+            if old_active in remap_table:
+                apply_active_palette_index(context, pal_type, remap_table[old_active])
+
+        clear_palette_selection(scene.voxel_workspace, pal_type)
+        tag_redraw_all_viewports()
+        if bpy is not None and hasattr(bpy.ops, "ed") and hasattr(bpy.ops.ed, "undo_push"):
+            try:
+                bpy.ops.ed.undo_push(message="Merge Palette Colors")
+            except Exception:
+                pass
+        self.report({'INFO'}, f"Merged {len(selected)} colors into {target}")
         return {'FINISHED'}
 
 
@@ -1807,6 +2248,8 @@ PALETTE_OPERATOR_CLASSES = [
     VOXEL_OT_compact_palette,
     VOXEL_OT_sort_palette_color,
     VOXEL_OT_fill_interior,
+    VOXEL_OT_clear_palette_selection,
+    VOXEL_OT_merge_palette_colors,
     VOXEL_OT_save_palette_preset,
     VOXEL_OT_load_palette_preset,
 ]

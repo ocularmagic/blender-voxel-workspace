@@ -16,7 +16,10 @@ except ImportError:
 
 from ..blender.runtime import get_volume
 from ..blender.object_graph import resolve_volume_context
-from ..operators.palette import get_used_palette_counts
+from ..operators.palette import (
+    get_used_palette_counts,
+    get_palette_selection,
+)
 from .palette_icons import generate_swatch_icon_id
 from ..blender.material_domains import get_palette, display_rgba_from_entry
 
@@ -211,6 +214,17 @@ def draw_typed_palette(
     else:
         entries = all_entries
 
+    selected = get_palette_selection(palette_props, pal_tab)
+    selected_count = len(selected)
+    if selected_count > 0:
+        sel_row = layout.row(align=True)
+        sel_row.label(text=f"Selected: {selected_count}", icon='RESTRICT_SELECT_OFF')
+        clear_op = sel_row.operator("voxel.clear_palette_selection", text="", icon='X')
+        clear_op.palette_type = pal_tab
+        if selected_count >= 2:
+            merge_op = sel_row.operator("voxel.merge_palette_colors", text="Merge to…", icon='MODIFIER')
+            merge_op.palette_type = pal_tab
+
     # Square 16px operator icons, 8 per row. Do not scale the button or
     # stack template_icon — both distort or hide the chip.
     columns = 8
@@ -222,7 +236,11 @@ def draw_typed_palette(
     )
     for entry_item in entries:
         idx = entry_item.index
-        is_active = (idx == active_index)
+        is_paint = (idx == active_index)
+        is_selected = idx in selected
+        # Empty selection: invert still marks the paint color (existing look).
+        # Once chips are multi-selected, invert marks the merge set.
+        is_active = is_selected or (is_paint and selected_count == 0)
         is_used = (counts.get(idx, 0) > 0)
         icon_id = generate_swatch_icon_id(
             display_rgba_from_entry(entry_item, pal_tab),
@@ -238,7 +256,7 @@ def draw_typed_palette(
             "voxel.select_palette_color",
             text="",
             icon_value=icon_id if icon_id else 0,
-            depress=is_active,
+            depress=is_paint,
         )
         op.palette_type = pal_tab
         op.index = idx

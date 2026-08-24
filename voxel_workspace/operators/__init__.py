@@ -32,6 +32,8 @@ from .palette import (
     PALETTE_OPERATOR_CLASSES,
     remap_volume_palette_indices,
     get_used_palette_counts,
+    merge_selected_colors,
+    get_palette_selection,
 )
 from .import_glb import (
     VOXEL_OT_import_glb,
@@ -82,5 +84,7 @@ __all__ = [
     "VOXEL_OT_shelf_activate",
     "remap_volume_palette_indices",
     "get_used_palette_counts",
+    "merge_selected_colors",
+    "get_palette_selection",
     "OPERATOR_CLASSES",
 ]
