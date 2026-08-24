@@ -176,6 +176,38 @@ def ensure_surface_edge_material(
     base_socket = bsdf.inputs["Base Color"]
     old_group = tree.nodes.get(EDGE_NODE_NAME)
     old_mix = tree.nodes.get("VoxelSurfaceEdgeMix")
+
+    # Normal reconciliation must be cheap. Once the direct graph exists, only
+    # update its three scalar controls; rebuilding dozens of nodes on every
+    # voxel sync makes large imported files unnecessarily slow to load/edit.
+    required_nodes = (
+        "VoxelSurfaceEdgeMix",
+        "VoxelSurfaceEdgeGeometry",
+        "VoxelSurfaceEdgePosition",
+        "VoxelSurfaceEdgeNormal",
+        "VoxelSurfaceEdgeLightPath",
+        "VoxelSurfaceEdgeWidth",
+        "VoxelSurfaceEdgeVoxelSize",
+        "VoxelSurfaceEdgeEnabled",
+        "VoxelSurfaceEdgeCameraMask",
+        "VoxelSurfaceEdgeEnabledMask",
+    )
+    existing_mix = tree.nodes.get("VoxelSurfaceEdgeMix")
+    existing_base_link = next(iter(base_socket.links), None)
+    if (
+        old_group is None
+        and existing_mix is not None
+        and existing_mix.bl_idname == "ShaderNodeMixRGB"
+        and existing_base_link is not None
+        and existing_base_link.from_node == existing_mix
+        and all(tree.nodes.get(name) is not None for name in required_nodes)
+    ):
+        tree.nodes["VoxelSurfaceEdgeWidth"].outputs["Value"].default_value = max(0.001, min(0.45, float(width_value)))
+        tree.nodes["VoxelSurfaceEdgeVoxelSize"].outputs["Value"].default_value = max(0.0001, float(voxel_size_value))
+        tree.nodes["VoxelSurfaceEdgeEnabled"].outputs["Value"].default_value = 1.0 if enabled_value else 0.0
+        material["voxel_workspace_surface_edge_overlay"] = True
+        return True
+
     source_link = next(
         (link for link in list(base_socket.links) if link.from_node not in {old_group, old_mix}),
         None,
