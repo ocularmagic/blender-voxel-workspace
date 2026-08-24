@@ -13,7 +13,7 @@ EDGE_NODE_NAME = "VoxelSurfaceEdgeOverlay"
 EDGE_ENABLED_ATTR = "voxel_surface_edges_enabled"
 EDGE_WIDTH_ATTR = "voxel_surface_edge_width"
 EDGE_VOXEL_SIZE_ATTR = "voxel_surface_voxel_size"
-EDGE_COLOR = (0.18, 0.18, 0.18, 1.0)
+EDGE_COLOR = (0.0, 0.0, 0.0, 1.0)
 
 
 def _node(nodes: Any, node_type: str, name: str, x: float, y: float) -> Any:
@@ -67,7 +67,7 @@ def ensure_edge_node_group() -> Any:
     enabled_socket = group.interface.new_socket(name="Enabled", in_out="INPUT", socket_type="NodeSocketFloat")
     enabled_socket.default_value = 0.0
     width_socket = group.interface.new_socket(name="Edge Width", in_out="INPUT", socket_type="NodeSocketFloat")
-    width_socket.default_value = 0.04
+    width_socket.default_value = 0.01
     size_socket = group.interface.new_socket(name="Voxel Size", in_out="INPUT", socket_type="NodeSocketFloat")
     size_socket.default_value = 1.0
     color_socket = group.interface.new_socket(name="Edge Color", in_out="INPUT", socket_type="NodeSocketColor")
@@ -160,8 +160,9 @@ def _find_principled(material: Any) -> Any:
 def ensure_surface_edge_material(
     material: Any,
     enabled_value: float = 0.0,
-    width_value: float = 0.04,
+    width_value: float = 0.01,
     voxel_size_value: float = 1.0,
+    edge_color_value: Any = EDGE_COLOR,
 ) -> bool:
     """Install a direct, render-only procedural edge overlay on a Surface material."""
     if bpy is None or material is None:
@@ -205,6 +206,7 @@ def ensure_surface_edge_material(
         tree.nodes["VoxelSurfaceEdgeWidth"].outputs["Value"].default_value = max(0.001, min(0.45, float(width_value)))
         tree.nodes["VoxelSurfaceEdgeVoxelSize"].outputs["Value"].default_value = max(0.0001, float(voxel_size_value))
         tree.nodes["VoxelSurfaceEdgeEnabled"].outputs["Value"].default_value = 1.0 if enabled_value else 0.0
+        tree.nodes["VoxelSurfaceEdgeMix"].inputs[2].default_value = tuple(edge_color_value[:4])
         material["voxel_workspace_surface_edge_overlay"] = True
         return True
 
@@ -335,7 +337,7 @@ def ensure_surface_edge_material(
         tree.links.new(source_socket, mix.inputs[1])
     else:
         mix.inputs[1].default_value = source_default
-    mix.inputs[2].default_value = EDGE_COLOR
+    mix.inputs[2].default_value = tuple(edge_color_value[:4])
     tree.links.new(mix.outputs[0], base_socket)
     material["voxel_workspace_surface_edge_overlay"] = True
     return True
@@ -363,12 +365,14 @@ def sync_surface_edge_object(surface_obj: Any) -> None:
     root = resolve_voxel_root(surface_obj)
     props = getattr(root, "voxel_workspace", None) if root is not None else None
     enabled = bool(getattr(props, "show_rendered_surface_edges", False))
-    width = float(getattr(props, "rendered_surface_edge_width", 0.04))
+    width = float(getattr(props, "rendered_surface_edge_width", 0.01))
+    edge_color = tuple(getattr(props, "rendered_surface_edge_color", EDGE_COLOR))
     mesh = getattr(surface_obj, "data", None)
     voxel_size = float(getattr(getattr(mesh, "voxel_workspace", None), "voxel_size", 1.0))
     surface_obj[EDGE_ENABLED_ATTR] = 1.0 if enabled else 0.0
     surface_obj[EDGE_WIDTH_ATTR] = max(0.001, min(0.45, width))
     surface_obj[EDGE_VOXEL_SIZE_ATTR] = max(0.0001, voxel_size)
+    surface_obj["voxel_surface_edge_color"] = edge_color
 
 
 def sync_surface_edge_materials(mesh: Any) -> None:
@@ -378,18 +382,20 @@ def sync_surface_edge_materials(mesh: Any) -> None:
     props = mesh.voxel_workspace
     surface_objects = list(_surface_objects_for_mesh(mesh))
     enabled = False
-    width = 0.04
+    width = 0.01
+    edge_color = EDGE_COLOR
     if surface_objects:
         from .object_graph import resolve_voxel_root
         root = resolve_voxel_root(surface_objects[0])
         root_props = getattr(root, "voxel_workspace", None) if root is not None else None
         enabled = bool(getattr(root_props, "show_rendered_surface_edges", False))
         width = float(getattr(root_props, "rendered_surface_edge_width", width))
+        edge_color = tuple(getattr(root_props, "rendered_surface_edge_color", edge_color))
     voxel_size = float(getattr(props, "voxel_size", 1.0))
     for entry in getattr(props, "surface_palette", []):
         material = getattr(entry, "material", None)
         if material is not None:
-            ensure_surface_edge_material(material, enabled, width, voxel_size)
+            ensure_surface_edge_material(material, enabled, width, voxel_size, edge_color)
     for surface_obj in surface_objects:
         sync_surface_edge_object(surface_obj)
 

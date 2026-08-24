@@ -1,107 +1,73 @@
 # Voxel Workspace
 
-Voxel Workspace is an installable Blender **5.2** extension for authoring independent, bounded Surface and Volume voxel fields directly in Blender.
+Voxel Workspace is a Blender add-on for creating and editing bounded voxel
+models with separate Surface and Volume voxel types.
 
-Current release: **0.8.0**.
+Current release: **0.9.0**
 
-## Features
+## What you can do
 
-- Sparse NumPy-backed 32³ bricks persisted inside ordinary `.blend` files.
-- A rooted object hierarchy: `Voxel Root` with equal Surface and Volume render children.
-- Tagged per-cell authority: Empty, Surface palette index, or Volume palette index.
-- Independent Surface and Volume palettes with native Blender materials.
-- New Surface palettes start with one **Neutral Gray** material; users add additional entries as needed.
-- Add Surface, Add Volume, **Repaint**, Erase, and Stop tools in the bottom Asset Shelf.
-- Surface/Volume N-panel tabs switch the corresponding placement mode, and bottom tools switch the matching palette tab.
-- Material-derived live placement colors that update after Surface or Volume material changes, displayed in the correct sRGB color space so the workspace overlay matches the palette swatches and the rendered mesh.
-- Blender-native material previews and editable Principled shader inputs in the Voxel Palette panel.
-- Palette panel action buttons arranged two-per-row (Pick + Add, Compact + Sort) for readability.
-- **Merge selected colors** collapses similar Surface or Volume palette entries with median-cut. Click a chip to paint; **Ctrl+click** adds chips to the merge set (the paint color is included automatically); **Shift+click** toggles the range from the paint color to the clicked chip. **Merge to…** remaps voxels onto the survivors and leaves emptied slots for Compact to purge.
-- **Fill Interior** fills every voxel with no exposed face — buried solid voxels and enclosed air pockets of any size — with the active palette color, leaving the surface shell untouched.
-- **Repaint** brushes the active palette material onto existing voxels, converting them to the active tab's type (Surface or Volume), one Undo step per drag.
-- Optional grey Surface voxel edges in final camera renders, generated procedurally in Surface materials; Volume materials and proxies are untouched.
-- Mouse-driven one-voxel strokes with one Blender Undo step per completed drag; `Esc` cancels an in-progress drag.
-- Object-local 3D DDA picking with a Z=0 work-plane fallback for empty fields.
-- Per-brick, depth-aware GPU editing previews and voxel-cell outlines on OpenGL and Vulkan.
-- One committed Surface mesh plus derived closed Volume proxy hulls.
-- GLB/glTF import with occupancy classification, material/texture sampling, and palette quantization.
-- A persistent **Voxel Workspace** layout recreated after New/Open while leaving the user on Blender's normal Layout workspace.
+- Create voxel fields with adjustable dimensions and voxel size.
+- Paint Surface voxels and Volume voxels independently.
+- Use separate editable color palettes for Surface and Volume materials.
+- Add, erase, and repaint voxels with Blender undo support.
+- Import GLB and glTF models and convert them into voxel fields.
+- Fill enclosed interiors while preserving the visible surface shell.
+- Show voxel boundaries in final camera renders.
+- Export exact visible Surface voxel geometry as a vertex-color OBJ.
 
 ## Requirements
 
-- Blender **5.1.0 or newer**.
-- Current shipping and verification target: **Blender 5.2.0 LTS** (`fbe6228777e7`).
-- No pip dependencies at runtime; Blender supplies NumPy.
+- Blender **5.1 or 5.2**.
 
-## Install
+## Installation
 
-1. Download or build `voxel_workspace-0.8.0.zip`.
-2. In Blender, open **Edit → Preferences → Get Extensions**.
-3. Open the repository menu and choose **Install from Disk…**.
-4. Select the ZIP and enable **Voxel Workspace** if Blender does not enable it automatically.
-
-For development builds:
-
-```bash
-python build_zip.py
-```
-
-The deterministic build script writes `dist/voxel_workspace-0.8.0.zip`.
-
-Blender's extension builder is also supported:
-
-```bash
-"blender" \
-  --command extension build \
-  --source-dir "<repository-root>/voxel_workspace" \
-  --output-dir "<repository-root>/dist"
-```
+1. Download the Voxel Workspace ZIP file.
+2. Open Blender and choose **Edit → Preferences**.
+3. Select **Add-ons** in the Preferences sidebar.
+4. Open the install menu in the upper-right corner of the Add-ons window.
+5. Choose **Install from Disk…** and select the Voxel Workspace ZIP file.
+6. Enable **Voxel Workspace** in the add-on list if it is not enabled automatically.
 
 ## Basic workflow
 
-1. Open **3D Viewport → N-panel → Voxel** and click **Create Volume**.
-2. Open the **Voxel Palette** N-panel tab.
-3. Select **Surface** or **Volume**. This activates the matching placement mode.
-4. Choose or add a palette material and edit its native Blender shader properties.
-5. Move the pointer over the field to preview the target, then drag with **LMB** to place voxels.
-6. Select **Erase** in the bottom Asset Shelf to remove whichever tagged voxel is hit, or **Repaint** to recolor existing voxels to the active palette material.
-7. Release LMB to commit the drag as one Undo step.
-8. Press **Esc while dragging** to cancel that drag, or **Esc while idle** to stop editing.
+1. Switch to the **Voxel Workspace** workspace using Blender’s workspace tabs.
+2. Open the **Voxel** tab in the 3D Viewport’s right-side N-panel.
+3. Click **Create Volume**.
+4. Use the Voxel Palette tab to choose a Surface or Volume palette color.
+5. In the bottom **Asset Shelf**, choose **Add Surface** or **Add Volume**.
+6. Move over the voxel field and drag with the left mouse button to paint.
+7. Use the Asset Shelf’s **Erase** or **Repaint** tools when needed.
 
-MMB, wheel, numpad navigation, Ctrl+Z, and Ctrl+Shift+Z pass through to Blender. Each placement drag targets the field state that existed when the drag began, preventing newly placed voxels from stacking toward the camera.
+Choosing a palette color or clicking a volume icon does not activate a voxel
+placement tool by itself. The **Add Surface** and **Add Volume** tools must be
+selected from the Asset Shelf.
 
-In the **Voxel Palette** panel, select a color then click **Fill Interior** to recolor every buried voxel and fill all enclosed air pockets (hollow interiors, voids) with that color. Voxels with any exposed face are left untouched. The button fills using the active palette tab's selected color.
+## Importing a model
 
-To collapse similar imported or painted colors, **Ctrl+click** or **Shift+click** chips to build a selection, then **Merge to…** and choose how many of those colors to keep. Compact afterwards to purge the emptied entries.
+1. Create or select a voxel field.
+2. In the Voxel panel, choose **Import GLB into Volume**.
+3. Select a `.glb` or `.gltf` file.
+4. Choose the padding, occupancy mode, and palette size, then confirm.
 
-Use **Show Voxel Edges** in the Voxel panel to toggle editing outlines. This affects the live editing preview, not EEVEE or Cycles renders.
+Imported colors are sampled and reduced to the selected palette size. Larger
+palette sizes preserve more color variation.
 
-Use **Show in Final Render** under **Rendered Surface Edges** to add thin grey voxel boundaries to camera renders. The effect is a procedural Surface-material overlay and does not scan or rebuild the voxel grid. It is restricted to camera rays; Volume voxel data, Volume materials, and Volume proxy geometry are unchanged.
+## Rendered voxel lines
 
-> **Asset Shelf note:** tool behavior is synchronized with the N-panel, but Blender 5.2 keeps the real Asset Shelf tile's blue active highlight in an internal `AssetWeakReference`. Changing tools from the N-panel cannot programmatically move that highlight for these local Object assets.
+Enable **Show in Final Render** under **Rendered Surface Edges** to show lines
+around visible Surface voxel faces. The line width and line color can be
+adjusted in the same section. The default line color is black.
 
-## Import GLB/glTF
+## Exact voxel-lined OBJ export
 
-1. Select a voxel field.
-2. In the Voxel panel click **Import GLB into Volume** and choose a `.glb` or `.gltf` file.
-3. Default settings use contain-fit with one voxel of padding, centered X/Y, resting on the field floor, solid occupancy, and a 64-color palette.
-4. Confirm the import. Conversion is committed as one Undo step.
+Choose **Export Exact Voxel-Lined OBJ** in the Voxel panel to export visible
+Surface voxel faces. Each face contains a palette-colored center and a line
+strip around its perimeter. Volume voxels are not exported.
 
-A nonempty target requires **Clear and Replace Volume** in the file dialog. Open or non-manifold meshes fall back to a surface shell. Large grids above 128³ cells warn that conversion may be slow.
-
-Only one voxel field is actively edited at a time. Object transforms are honored because rays are converted into object-local voxel coordinates before DDA traversal.
-
-## Development and verification
-
-Run the unit suite:
-
-```bash
-uv run pytest -q
-```
-
-Current result: **92 passed** on Blender Workspace release `0.7.0` source.
-
-Blender integration and acceptance scripts are under `tests/blender/`. The verified commands and artifact list are documented in [`tests/ACCEPTANCE.md`](tests/ACCEPTANCE.md). Architecture decisions and current validation status are documented in [`ARCHITECTURE.md`](ARCHITECTURE.md).
+The OBJ contains vertex colors and does not create texture or material
+sidecar files. The export uses the current Surface palette colors and line
+settings at the time of export.
 
 ## License
 

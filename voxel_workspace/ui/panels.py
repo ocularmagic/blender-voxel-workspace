@@ -369,6 +369,9 @@ def _draw_volume_settings(layout: Any, context: Any) -> None:
             width_row = edge_box.row()
             width_row.enabled = bool(root_props.show_rendered_surface_edges)
             width_row.prop(root_props, "rendered_surface_edge_width", text="Width")
+            color_row = edge_box.row()
+            color_row.enabled = bool(root_props.show_rendered_surface_edges)
+            color_row.prop(root_props, "rendered_surface_edge_color", text="Line Color")
 
         vol_uuid = props.uuid
         entry = get_volume(vol_uuid) if vol_uuid else None
@@ -387,6 +390,10 @@ def _draw_volume_settings(layout: Any, context: Any) -> None:
         export_row = vol_box.row()
         export_row.scale_y = 1.2
         export_row.operator("voxel.export_slices", text="Export Voxel Slices", icon="EXPORT")
+        obj_export_row = vol_box.row()
+        obj_export_row.scale_y = 1.2
+        obj_export_row.enabled = not empty
+        obj_export_row.operator("voxel.export_obj", text="Export Exact Voxel-Lined OBJ", icon="EXPORT")
     else:
         vol_box.label(text="No active voxel volume", icon="INFO")
 

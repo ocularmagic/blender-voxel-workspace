@@ -247,9 +247,19 @@ class VoxelObjectProperties(PropertyGroup):
         rendered_surface_edge_width: FloatProperty(
             name="Rendered Edge Width",
             description="Rendered Surface edge width as a fraction of one voxel",
-            default=0.04,
+            default=0.01,
             min=0.001,
             max=0.45,
+            update=_surface_render_settings_changed,
+        )
+        rendered_surface_edge_color: FloatVectorProperty(
+            name="Rendered Edge Color",
+            description="Color used for rendered and exported Surface voxel edge lines",
+            subtype="COLOR",
+            size=4,
+            default=(0.0, 0.0, 0.0, 1.0),
+            min=0.0,
+            max=1.0,
             update=_surface_render_settings_changed,
         )
         surface_object: PointerProperty(
