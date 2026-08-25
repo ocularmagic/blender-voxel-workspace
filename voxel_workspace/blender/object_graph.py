@@ -367,13 +367,21 @@ def repair_voxel_hierarchy(root_or_surface: Any) -> RepairReport:
     return report
 
 
-def cleanup_stale_voxel_children() -> List[str]:
-    """Find and clean up orphaned or stale generated children whose root or mesh no longer exists."""
+def cleanup_stale_voxel_children(repair_missing_roots: bool = True) -> List[str]:
+    """Find and clean up orphaned or stale generated children whose root or mesh no longer exists.
+
+    ``repair_missing_roots=False`` makes the pass strictly read-only with respect
+    to the object graph (no ensure_root_for_surface / view_layer.update). It is
+    used by the post-undo/post-redo timer, where structural repair inside
+    Blender's notifier loop re-enters the depsgraph builder mid-undo and crashes.
+    """
     if bpy is None:
         return []
     removed = []
     for obj in list(bpy.data.objects):
         if is_surface_render_object(obj):
+            if not repair_missing_roots:
+                continue
             parent = obj.parent
             if parent is None or not is_voxel_root(parent):
                 root = ensure_root_for_surface(obj)

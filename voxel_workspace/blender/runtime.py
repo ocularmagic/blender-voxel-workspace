@@ -245,9 +245,20 @@ def on_depsgraph_update(scene, depsgraph) -> None:
     deduplicate_mesh_uuids(scene, depsgraph)
 
 
-def reconcile_all_palette_caches(pack_images: bool = False) -> None:
-    """Reconcile native material domain bindings, slots, and GPU preview LUTs for all voxel meshes."""
-    if bpy is None or not hasattr(bpy, "data") or not hasattr(bpy.data, "meshes"):
+def reconcile_all_palette_caches(
+    pack_images: bool = False,
+    allow_structural_repair: bool = True,
+) -> None:
+    """Reconcile native material domain bindings, slots, and GPU preview LUTs for all voxel meshes.
+
+    ``allow_structural_repair=False`` (used by the post-undo/redo timer) restricts
+    the pass to derived-state refresh only. Structural repair creates/reparents
+    Objects and calls ``view_layer.update()``; doing that from a timer inside
+    Blender's notifier loop while an undo is settling re-enters the depsgraph
+    builder with half-restored IDs and crashes (see blender.crash.txt backtrace:
+    py_timer_execute -> ViewLayer_update -> DEG build on dangling IDP_ID).
+    """
+    if bpy is None or not hasattr(bpy, "data") or not hasattr(bpy, "meshes"):
         return
     from .properties import ensure_palette, migrate_native_material_domains
     from .material_domains import cleanup_legacy_atlas_datablocks
@@ -256,35 +267,51 @@ def reconcile_all_palette_caches(pack_images: bool = False) -> None:
     from .mesh_sync import sync_volume_mesh
     from .gpu_preview import drop_palette_lut
 
-    cleanup_stale_voxel_children()
-    cleanup_stale_proxies()
+    cleanup_stale_voxel_children(repair_missing_roots=allow_structural_repair)
+    if allow_structural_repair:
+        # Only the interactive/load paths may delete orphaned proxies; the
+        # post-undo pass stays read-only with respect to the object graph.
+        cleanup_stale_proxies()
 
     for mesh in bpy.data.meshes:
         if hasattr(mesh, "voxel_workspace") and mesh.voxel_workspace.is_voxel_mesh:
-            props = mesh.voxel_workspace
-            if int(props.schema_version) < 3:
-                from .migration import migrate_mesh_to_schema3
-                migrate_mesh_to_schema3(mesh)
-            if len(props.surface_palette) == 0 or len(props.volume_palette) == 0:
-                ensure_palette(mesh)
-            migrate_native_material_domains(mesh)
-            
-            entry = get_or_load(mesh)
-            if entry is not None and entry.grid is not None:
-                entry.cpu_buffers.clear()
-                entry.volume_proxy_buffers.clear()
-                sync_volume_mesh(mesh, grid=entry.grid, entry=entry, dirty_only=False, ensure_material=False)
+            try:
+                props = mesh.voxel_workspace
+                if int(props.schema_version) < 3:
+                    from .migration import migrate_mesh_to_schema3
+                    migrate_mesh_to_schema3(mesh)
+                if len(props.surface_palette) == 0 or len(props.volume_palette) == 0:
+                    ensure_palette(mesh)
+                migrate_native_material_domains(mesh)
 
-            cleanup_legacy_atlas_datablocks(mesh)
+                entry = get_or_load(mesh)
+                if entry is not None and entry.grid is not None:
+                    entry.cpu_buffers.clear()
+                    entry.volume_proxy_buffers.clear()
+                    sync_volume_mesh(mesh, grid=entry.grid, entry=entry, dirty_only=False, ensure_material=False)
 
-            drop_palette_lut(mesh.voxel_workspace.uuid)
+                cleanup_legacy_atlas_datablocks(mesh)
+
+                drop_palette_lut(mesh.voxel_workspace.uuid)
+            except Exception:
+                # One broken mesh must never abort the whole reconcile pass,
+                # and never propagate an exception out of a timer callback.
+                continue
 
     tag_redraw_all_viewports()
 
 
 def _reconcile_timer_callback() -> None:
-    """Main-thread timer callback for deferred post-undo/post-redo cache reconciliation."""
-    reconcile_all_palette_caches(pack_images=False)
+    """Main-thread timer callback for deferred post-undo/post-redo cache reconciliation.
+
+    Deliberately non-structural and exception-safe: this runs inside Blender's
+    notifier loop right after an undo/redo, when datablock topology must not be
+    touched and any view_layer.update() would recurse into the depsgraph builder.
+    """
+    try:
+        reconcile_all_palette_caches(pack_images=False, allow_structural_repair=False)
+    except Exception:
+        pass
     return None
 
 
