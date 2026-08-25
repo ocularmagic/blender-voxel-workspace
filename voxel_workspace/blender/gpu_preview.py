@@ -332,6 +332,41 @@ def build_hover_face_mesh_data(
     return verts, tris
 
 
+def build_hover_face_outline_mesh_data(
+    voxel_coord: Tuple[int, int, int],
+    face_normal: Tuple[int, int, int] = (0, 0, 1),
+    voxel_size: float = 1.0,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Generate perimeter line segments for a hovered voxel face highlight.
+
+    Returns:
+        verts: (4, 3) float32 array
+        lines: (4, 2) int32 array
+    """
+    verts, _tris = build_hover_face_mesh_data(voxel_coord, face_normal, voxel_size)
+    lines = np.array([[0, 1], [1, 2], [2, 3], [3, 0]], dtype=np.int32)
+    return verts, lines
+
+
+def build_hover_face_x_mesh_data(
+    voxel_coord: Tuple[int, int, int],
+    face_normal: Tuple[int, int, int] = (0, 0, 1),
+    voxel_size: float = 1.0,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Generate an X (corner-to-corner cross) for the hovered face.
+
+    Used as a mode-specific erase marker that stays recognizable no matter
+    what color the underlying voxel is.
+
+    Returns:
+        verts: (4, 3) float32 array
+        lines: (2, 2) int32 array
+    """
+    verts, _tris = build_hover_face_mesh_data(voxel_coord, face_normal, voxel_size)
+    lines = np.array([[0, 2], [1, 3]], dtype=np.int32)
+    return verts, lines
+
+
 # --- GPU Batch Builders ---
 
 def build_brick_gpu_batch(
@@ -461,6 +496,7 @@ def build_hover_face_gpu_batch(
 # --- Runtime State & Caching ---
 
 _HOVER_STATE: Optional[Dict[str, Any]] = None
+_PENDING_ERASE: List[Tuple[Tuple[int, int, int], Tuple[int, int, int]]] = []
 _SAVED_OVERLAYS: Dict[int, Dict[str, Any]] = {}
 _DRAW_HANDLER: Optional[Any] = None
 _ACTIVE_BOUNDS_BATCH: Optional[Any] = None
@@ -472,8 +508,9 @@ def set_hover_state(
     coord: Optional[Tuple[int, int, int]],
     normal: Tuple[int, int, int] = (0, 0, 1),
     color: Tuple[float, float, float, float] = (1.0, 0.9, 0.2, 0.6),
+    mode: Optional[str] = None,
 ) -> None:
-    """Set the active hover face coordinate, normal, and highlight color."""
+    """Set the active hover face coordinate, normal, color, and brush mode."""
     global _HOVER_STATE
     if coord is None:
         _HOVER_STATE = None
@@ -482,6 +519,7 @@ def set_hover_state(
             "coord": tuple(coord),
             "normal": tuple(normal),
             "color": tuple(color),
+            "mode": str(mode).upper() if mode else None,
             "batch": None,
         }
 
@@ -495,6 +533,23 @@ def clear_hover_state() -> None:
     """Clear the active hover state."""
     global _HOVER_STATE
     _HOVER_STATE = None
+
+
+def set_pending_erase(cells: List[Tuple[Tuple[int, int, int], Tuple[int, int, int]]]) -> None:
+    """Set the list of (coord, normal) faces marked for deferred erase."""
+    global _PENDING_ERASE
+    _PENDING_ERASE = [(tuple(c), tuple(n)) for c, n in cells]
+
+
+def get_pending_erase() -> List[Tuple[Tuple[int, int, int], Tuple[int, int, int]]]:
+    """Return the pending erase face list."""
+    return _PENDING_ERASE
+
+
+def clear_pending_erase() -> None:
+    """Clear all pending erase marks."""
+    global _PENDING_ERASE
+    _PENDING_ERASE = []
 
 
 def update_volume_gpu_preview(
@@ -777,6 +832,7 @@ def _draw_callback() -> None:
                 h_coord = _HOVER_STATE["coord"]
                 h_norm = _HOVER_STATE.get("normal", (0, 0, 1))
                 h_color = _HOVER_STATE.get("color", (1.0, 0.9, 0.2, 0.6))
+                h_mode = _HOVER_STATE.get("mode")
                 hover_batch = _HOVER_STATE.get("batch")
                 if hover_batch is None:
                     hover_batch = build_hover_face_gpu_batch(h_coord, h_norm, v_size)
@@ -784,7 +840,111 @@ def _draw_callback() -> None:
                 if hover_batch is not None:
                     uniform_shader.bind()
                     uniform_shader.uniform_float("color", h_color)
+                    # Additive blending guarantees the tint brightens the face
+                    # no matter how dark the underlying voxel color is.
+                    gpu.state.blend_set('ADDITIVE')
+                    gpu.state.depth_test_set('LESS_EQUAL')
                     hover_batch.draw(uniform_shader)
+                    gpu.state.blend_set('ALPHA')
+                    # Perimeter outline in a color guaranteed to contrast with
+                    # the tint (its inverse), offset slightly along the face
+                    # normal so it never z-fights with the fill quad.
+                    try:
+                        outline_verts, outline_lines = build_hover_face_outline_mesh_data(h_coord, h_norm, v_size)
+                        eps = v_size * 0.002
+                        n_vec = np.array(h_norm, dtype=np.float32)
+                        outline_verts = outline_verts + n_vec * eps
+                        outline_batch = batch_for_shader(
+                            uniform_shader, 'LINES', {"pos": outline_verts}, indices=outline_lines
+                        )
+                        lum = 0.2126 * h_color[0] + 0.7152 * h_color[1] + 0.0722 * h_color[2]
+                        o_color = (0.02,) * 3 if lum > 0.5 else (0.98,) * 3
+                        uniform_shader.uniform_float("color", (*o_color, 0.95))
+                        outline_batch.draw(uniform_shader)
+
+                        # Erase mode: draw an X across the face so erase stays
+                        # recognizable even when it lands on a same-colored voxel.
+                        if h_mode == "ERASE":
+                            x_verts, x_lines = build_hover_face_x_mesh_data(h_coord, h_norm, v_size)
+                            x_verts = x_verts + n_vec * (eps * 2.0)
+                            x_batch = batch_for_shader(
+                                uniform_shader, 'LINES', {"pos": x_verts}, indices=x_lines
+                            )
+                            # White halo underneath + black X on top reads on
+                            # any voxel color, including white.
+                            uniform_shader.uniform_float("color", (1.0, 1.0, 1.0, 0.85))
+                            x_batch.draw(uniform_shader)
+                            x_batch.draw(uniform_shader)
+                            x_batch.draw(uniform_shader)
+                            uniform_shader.uniform_float("color", (0.05, 0.05, 0.08, 1.0))
+                            x_batch.draw(uniform_shader)
+                    except Exception:
+                        pass
+
+                # 5b. Redraw cell-boundary edges over the highlight so voxels
+                # keep their definition inside a traced/highlighted region.
+                if scene_props is None or scene_props.show_voxel_edges:
+                    gpu.state.depth_mask_set(False)
+                    uniform_shader.bind()
+                    uniform_shader.uniform_float("color", (0.025, 0.025, 0.03, 1.0))
+                    for coord, batch in list(entry.gpu_edge_batches.items()):
+                        if batch is not None:
+                            batch.draw(uniform_shader)
+                    for coord, batch in list(getattr(entry, "volume_gpu_edge_batches", {}).items()):
+                        if batch is not None:
+                            batch.draw(uniform_shader)
+                    gpu.state.depth_mask_set(True)
+
+            # 5c. Draw pending-erase marks: every voxel touched this stroke
+            # keeps a red tint + X until the mouse is released.
+            if _PENDING_ERASE and entry is not None:
+                erase_color = (1.0, 0.2, 0.2, 0.6)
+                try:
+                    for p_coord, p_norm in _PENDING_ERASE:
+                        n_vec = np.array(p_norm, dtype=np.float32)
+                        eps = v_size * 0.002
+                        # Darken pass: subtractive so red tint reads even on
+                        # near-white voxels where additive red saturates.
+                        d_batch = build_hover_face_gpu_batch(p_coord, p_norm, v_size)
+                        if d_batch is not None:
+                            uniform_shader.bind()
+                            uniform_shader.uniform_float("color", (0.35, 0.35, 0.35, 1.0))
+                            gpu.state.blend_set('MULTIPLY')
+                            gpu.state.depth_test_set('LESS_EQUAL')
+                            d_batch.draw(uniform_shader)
+                            gpu.state.blend_set('ALPHA')
+                        # Red tint
+                        p_batch = build_hover_face_gpu_batch(p_coord, p_norm, v_size)
+                        if p_batch is not None:
+                            uniform_shader.bind()
+                            uniform_shader.uniform_float("color", erase_color)
+                            gpu.state.blend_set('ADDITIVE')
+                            gpu.state.depth_test_set('LESS_EQUAL')
+                            p_batch.draw(uniform_shader)
+                            gpu.state.blend_set('ALPHA')
+                        # Outline
+                        o_verts, o_lines = build_hover_face_outline_mesh_data(p_coord, p_norm, v_size)
+                        o_verts = o_verts + n_vec * eps
+                        o_batch = batch_for_shader(
+                            uniform_shader, 'LINES', {"pos": o_verts}, indices=o_lines
+                        )
+                        uniform_shader.uniform_float("color", (0.02, 0.02, 0.03, 0.95))
+                        o_batch.draw(uniform_shader)
+                        # X marker: white halo underneath + black X on top
+                        # reads on any voxel color, including white.
+                        x_verts, x_lines = build_hover_face_x_mesh_data(p_coord, p_norm, v_size)
+                        x_verts = x_verts + n_vec * (eps * 2.0)
+                        x_batch = batch_for_shader(
+                            uniform_shader, 'LINES', {"pos": x_verts}, indices=x_lines
+                        )
+                        uniform_shader.uniform_float("color", (1.0, 1.0, 1.0, 0.85))
+                        x_batch.draw(uniform_shader)
+                        x_batch.draw(uniform_shader)
+                        x_batch.draw(uniform_shader)
+                        uniform_shader.uniform_float("color", (0.05, 0.05, 0.08, 1.0))
+                        x_batch.draw(uniform_shader)
+                except Exception:
+                    pass
 
     except Exception:
         # Drawing handler must never crash viewport rendering

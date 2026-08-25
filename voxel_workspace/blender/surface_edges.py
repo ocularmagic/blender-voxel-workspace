@@ -183,9 +183,11 @@ def ensure_surface_edge_material(
     # voxel sync makes large imported files unnecessarily slow to load/edit.
     required_nodes = (
         "VoxelSurfaceEdgeMix",
-        "VoxelSurfaceEdgeGeometry",
+        "VoxelSurfaceEdgeTexCoord",
         "VoxelSurfaceEdgePosition",
-        "VoxelSurfaceEdgeNormal",
+        "VoxelSurfaceEdgeXMedianMinXY",
+        "VoxelSurfaceEdgeYMedianMinXY",
+        "VoxelSurfaceEdgeZMedianMinXY",
         "VoxelSurfaceEdgeLightPath",
         "VoxelSurfaceEdgeWidth",
         "VoxelSurfaceEdgeVoxelSize",
@@ -234,6 +236,7 @@ def ensure_surface_edge_material(
         EDGE_NODE_NAME,
         "VoxelSurfaceEdgeMix",
         "VoxelSurfaceEdgeGeometry",
+        "VoxelSurfaceEdgeTexCoord",
         "VoxelSurfaceEdgePosition",
         "VoxelSurfaceEdgeNormal",
         "VoxelSurfaceEdgeLightPath",
@@ -242,6 +245,9 @@ def ensure_surface_edge_material(
         "VoxelSurfaceEdgeVoxelSize",
         "VoxelSurfaceEdgeCameraMask",
         "VoxelSurfaceEdgeEnabledMask",
+        "VoxelSurfaceEdgeMedianMinXY",
+        "VoxelSurfaceEdgeMedianMaxXY",
+        "VoxelSurfaceEdgeMedianClamp",
     }
     generated_names.update({
         f"VoxelSurfaceEdge{axis}{suffix}"
@@ -267,11 +273,12 @@ def ensure_surface_edge_material(
         result.operation = operation
         return result
 
-    geometry = node("ShaderNodeNewGeometry", "VoxelSurfaceEdgeGeometry", -1200, -260)
+    # Object-space position: voxel grid is axis-aligned in object space, so
+    # the edge pattern follows the model under any root rotation. World-space
+    # Geometry.Position would keep the pattern frozen in the world.
+    texcoord = node("ShaderNodeTexCoord", "VoxelSurfaceEdgeTexCoord", -1200, -260)
     position = node("ShaderNodeSeparateXYZ", "VoxelSurfaceEdgePosition", -1000, -100)
-    normal = node("ShaderNodeSeparateXYZ", "VoxelSurfaceEdgeNormal", -1000, -520)
-    tree.links.new(geometry.outputs["Position"], position.inputs[0])
-    tree.links.new(geometry.outputs["Normal"], normal.inputs[0])
+    tree.links.new(texcoord.outputs["Object"], position.inputs[0])
 
     distances = {}
     for axis, y in zip("XYZ", (-100, -260, -420)):
@@ -299,17 +306,30 @@ def ensure_surface_edge_material(
 
     weights = []
     for axis, first, second, y in (("X", "Y", "Z", -100), ("Y", "X", "Z", -300), ("Z", "X", "Y", -500)):
+        # Edge proximity is measured on the OTHER two axes (tangent
+        # directions): nearest = MIN(d[first], d[second]) < width.
         nearest = math_node("MINIMUM", f"VoxelSurfaceEdge{axis}Nearest", 0, y)
         threshold = math_node("LESS_THAN", f"VoxelSurfaceEdge{axis}Threshold", 180, y)
-        normal_abs = math_node("ABSOLUTE", f"VoxelSurfaceEdge{axis}Normal", 180, y - 150)
-        weight = math_node("MULTIPLY", f"VoxelSurfaceEdge{axis}Weight", 380, y)
         tree.links.new(distances[first].outputs[0], nearest.inputs[0])
         tree.links.new(distances[second].outputs[0], nearest.inputs[1])
         tree.links.new(nearest.outputs[0], threshold.inputs[0])
         tree.links.new(width.outputs["Value"], threshold.inputs[1])
-        tree.links.new(normal.outputs[axis], normal_abs.inputs[0])
+        # Face-axis selection replaces the old world-space normal weighting
+        # (which broke under root rotation): on a face lying in a grid plane,
+        # the face-normal axis's own grid distance is ~0 — the smallest of
+        # the three. Flag it with two LESS_THAN comparisons ANDed together.
+        lt_first = math_node("LESS_THAN", f"VoxelSurfaceEdge{axis}MedianMinXY", 0, y - 150)
+        lt_second = math_node("LESS_THAN", f"VoxelSurfaceEdge{axis}FaceFlag", 90, y - 150)
+        is_face = math_node("MULTIPLY", f"VoxelSurfaceEdge{axis}Keep", 260, y - 150)
+        weight = math_node("MULTIPLY", f"VoxelSurfaceEdge{axis}Weight", 380, y)
+        tree.links.new(distances[axis].outputs[0], lt_first.inputs[0])
+        tree.links.new(distances[first].outputs[0], lt_first.inputs[1])
+        tree.links.new(distances[axis].outputs[0], lt_second.inputs[0])
+        tree.links.new(distances[second].outputs[0], lt_second.inputs[1])
+        tree.links.new(lt_first.outputs[0], is_face.inputs[0])
+        tree.links.new(lt_second.outputs[0], is_face.inputs[1])
         tree.links.new(threshold.outputs[0], weight.inputs[0])
-        tree.links.new(normal_abs.outputs[0], weight.inputs[1])
+        tree.links.new(is_face.outputs[0], weight.inputs[1])
         weights.append(weight)
 
     add_xy = math_node("ADD", "VoxelSurfaceEdgeAddXY", 560, -120)

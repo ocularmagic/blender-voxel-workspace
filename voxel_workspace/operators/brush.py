@@ -1,5 +1,5 @@
 """Modal Place and Erase Voxel Brush operator and stroke session management."""
-from typing import Any, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 try:
     import bpy
@@ -30,6 +30,8 @@ from ..blender.runtime import (
 from ..blender.gpu_preview import (
     set_hover_state,
     clear_hover_state,
+    set_pending_erase,
+    clear_pending_erase,
     refresh_material_display_colors,
     update_volume_gpu_preview,
     stop_editing,
@@ -192,6 +194,8 @@ class BrushSession:
         self.last_target: Optional[VoxelCoord] = None
         self.pick_grid = None
         self.modal_token = modal_token
+        # Deferred-erase cells touched this stroke: [(coord, face_normal)].
+        self.pending_erase_cells: List[Tuple[VoxelCoord, VoxelCoord]] = []
 
     def resolve_view3d_region(
         self, context: Any, event: Any
@@ -290,6 +294,8 @@ class BrushSession:
         self.stroke = None
         self.last_target = None
         self.pick_grid = None
+        self.pending_erase_cells = []
+        clear_pending_erase()
         clear_hover_state()
 
     def handle_event(self, context: Any, event: Any) -> set:
@@ -357,6 +363,8 @@ class BrushSession:
 
         if (event.ctrl or getattr(event, "oskey", False)) and event.type in {'Z', 'Y'}:
             clear_hover_state()
+            clear_pending_erase()
+            self.pending_erase_cells = []
             if self.is_dragging and self.stroke is not None:
                 self.stroke = None
             self.is_dragging = False
@@ -374,6 +382,8 @@ class BrushSession:
                 self.is_dragging = False
                 self.last_target = None
                 self.pick_grid = None
+                self.pending_erase_cells = []
+                clear_pending_erase()
                 tag_redraw_all_viewports()
                 return {'RUNNING_MODAL'}
             else:
@@ -447,12 +457,18 @@ class BrushSession:
             cell = brush_cell_for_scene(context.scene, self.mode)
             if target_cell is not None:
                 self.stroke.record(entry.grid, target_cell, cell)
-                if isinstance(entry.grid, TaggedVoxelGrid):
-                    apply_brush_value(entry.grid, target_cell, 'ADD_SURFACE' if self.mode == 'PLACE' else self.mode, cell.index, domain=cell.domain)
+                if self.mode == 'ERASE':
+                    # Deferred erase: keep the voxel in the grid (marked with
+                    # its face normal) so it renders with a red X until release.
+                    self.pending_erase_cells.append((target_cell, hover_normal))
+                    set_pending_erase(self.pending_erase_cells)
                 else:
-                    entry.grid.set(target_cell, cell.index)
-                entry.dirty_bricks.add(split_coord(target_cell, entry.grid.brick_size)[0])
-                update_volume_gpu_preview(entry, dirty_only=True)
+                    if isinstance(entry.grid, TaggedVoxelGrid):
+                        apply_brush_value(entry.grid, target_cell, 'ADD_SURFACE' if self.mode == 'PLACE' else self.mode, cell.index, domain=cell.domain)
+                    else:
+                        entry.grid.set(target_cell, cell.index)
+                    entry.dirty_bricks.add(split_coord(target_cell, entry.grid.brick_size)[0])
+                    update_volume_gpu_preview(entry, dirty_only=True)
                 self.last_target = target_cell
             else:
                 self.last_target = None
@@ -461,28 +477,51 @@ class BrushSession:
 
         # 5. Handle Mouse Move while Dragging (Stroke drag & fill missed cells)
         if event.type == 'MOUSEMOVE' and self.is_dragging:
+            # Keep the hover highlight tracking the cursor mid-stroke so the
+            # X marker and tint follow the erase path instead of freezing on
+            # the first voxel.
+            if hover_cell is not None and hover_normal is not None:
+                color = brush_display_color_for_scene(context.scene, v_ctx.mesh, self.mode)
+                set_hover_state(hover_cell, hover_normal, color=color, mode=self.mode)
+            else:
+                clear_hover_state()
             if target_cell is not None:
                 cell = brush_cell_for_scene(context.scene, self.mode)
+                new_targets: List[VoxelCoord] = []
                 if self.last_target is not None and self.last_target != target_cell:
-                    cells = line_3d(self.last_target, target_cell)
-                    for c in cells:
-                        if entry.grid.in_extent(c):
-                            self.stroke.record(entry.grid, c, cell)
-                            if isinstance(entry.grid, TaggedVoxelGrid):
-                                apply_brush_value(entry.grid, c, 'ADD_SURFACE' if self.mode == 'PLACE' else self.mode, cell.index, domain=cell.domain)
-                            else:
-                                entry.grid.set(c, cell.index)
-                            entry.dirty_bricks.add(split_coord(c, entry.grid.brick_size)[0])
+                    new_targets = [c for c in line_3d(self.last_target, target_cell) if entry.grid.in_extent(c)]
+                elif self.last_target is None:
+                    new_targets = [target_cell]
+                if self.mode == 'ERASE':
+                    # Deferred erase: only record + mark; no grid mutation yet.
+                    for c in new_targets:
+                        self.stroke.record(entry.grid, c, cell)
+                        if c not in {pc for pc, _n in self.pending_erase_cells}:
+                            self.pending_erase_cells.append((c, hover_normal or (0, 0, 1)))
+                    if new_targets:
+                        set_pending_erase(self.pending_erase_cells)
+                        self.last_target = target_cell
+                        tag_redraw_all_viewports()
+                    return {'RUNNING_MODAL'}
+                if self.last_target is not None and self.last_target != target_cell:
+                    for c in new_targets:
+                        self.stroke.record(entry.grid, c, cell)
+                        if isinstance(entry.grid, TaggedVoxelGrid):
+                            apply_brush_value(entry.grid, c, 'ADD_SURFACE' if self.mode == 'PLACE' else self.mode, cell.index, domain=cell.domain)
+                        else:
+                            entry.grid.set(c, cell.index)
+                        entry.dirty_bricks.add(split_coord(c, entry.grid.brick_size)[0])
                     update_volume_gpu_preview(entry, dirty_only=True)
                     self.last_target = target_cell
                     tag_redraw_all_viewports()
-                elif self.last_target is None:
-                    self.stroke.record(entry.grid, target_cell, cell)
-                    if isinstance(entry.grid, TaggedVoxelGrid):
-                        apply_brush_value(entry.grid, target_cell, 'ADD_SURFACE' if self.mode == 'PLACE' else self.mode, cell.index, domain=cell.domain)
-                    else:
-                        entry.grid.set(target_cell, cell.index)
-                    entry.dirty_bricks.add(split_coord(target_cell, entry.grid.brick_size)[0])
+                elif self.last_target is None and new_targets:
+                    for c in new_targets:
+                        self.stroke.record(entry.grid, c, cell)
+                        if isinstance(entry.grid, TaggedVoxelGrid):
+                            apply_brush_value(entry.grid, c, 'ADD_SURFACE' if self.mode == 'PLACE' else self.mode, cell.index, domain=cell.domain)
+                        else:
+                            entry.grid.set(c, cell.index)
+                        entry.dirty_bricks.add(split_coord(c, entry.grid.brick_size)[0])
                     update_volume_gpu_preview(entry, dirty_only=True)
                     self.last_target = target_cell
                     tag_redraw_all_viewports()
@@ -492,6 +531,17 @@ class BrushSession:
         if event.type == 'LEFTMOUSE' and event.value == 'RELEASE' and self.is_dragging:
             self.is_dragging = False
             self.last_target = None
+            # Deferred erase: apply the recorded erasures to the grid now.
+            if self.mode == 'ERASE' and self.stroke is not None and len(self.stroke.deltas) > 0:
+                for delta in self.stroke.deltas:
+                    if isinstance(entry.grid, TaggedVoxelGrid):
+                        apply_brush_value(entry.grid, delta.coord, 'ERASE', delta.after.index if isinstance(delta.after, VoxelCell) else 0)
+                    else:
+                        entry.grid.set(delta.coord, 0)
+                    entry.dirty_bricks.add(split_coord(delta.coord, entry.grid.brick_size)[0])
+                update_volume_gpu_preview(entry, dirty_only=True)
+            self.pending_erase_cells = []
+            clear_pending_erase()
             if self.stroke is not None and len(self.stroke.deltas) > 0:
                 mesh = v_ctx.mesh
                 changed_bricks = self.stroke.changed_bricks()
@@ -521,7 +571,7 @@ class BrushSession:
         if event.type == 'MOUSEMOVE' and not self.is_dragging:
             if hover_cell is not None and hover_normal is not None:
                 color = brush_display_color_for_scene(context.scene, v_ctx.mesh, self.mode)
-                set_hover_state(hover_cell, hover_normal, color=color)
+                set_hover_state(hover_cell, hover_normal, color=color, mode=self.mode)
             else:
                 clear_hover_state()
             tag_redraw_all_viewports()

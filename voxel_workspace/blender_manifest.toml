@@ -1,6 +1,6 @@
 schema_version = "1.0.0"
 id = "voxel_workspace"
-version = "0.11.0"
+version = "0.12.0"
 name = "Voxel Workspace"
 tagline = "Author bounded voxel volumes directly in Blender"
 maintainer = "Voxel Workspace contributors"
