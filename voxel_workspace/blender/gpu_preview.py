@@ -1008,6 +1008,28 @@ def start_editing(volume_uuid: str, context: Optional[Any] = None) -> None:
 
     set_active_volume_uuid(volume_uuid)
 
+    # Self-heal a Surface child that was transformed directly outside the voxel
+    # tools (e.g. the user rotated the model in object mode). The edit preview
+    # and brush picking transform through Voxel Root while the committed mesh
+    # renders through the Surface object; a non-identity child local transform
+    # makes those disagree and shows a rotated ghost. Fold it up into the root
+    # before any preview batches are built.
+    try:
+        from .object_graph import normalize_voxel_child_transforms
+        if bpy is not None:
+            ctx = context if context is not None else bpy.context
+            if ctx is not None and hasattr(ctx, "scene") and hasattr(ctx.scene, "objects"):
+                for obj in ctx.scene.objects:
+                    if (
+                        hasattr(obj, "data")
+                        and hasattr(obj.data, "voxel_workspace")
+                        and obj.data.voxel_workspace.uuid == volume_uuid
+                    ):
+                        normalize_voxel_child_transforms(obj)
+                        break
+    except Exception:
+        pass
+
     # Set is_editing flag on object if found
     if bpy is not None:
         ctx = context if context is not None else bpy.context

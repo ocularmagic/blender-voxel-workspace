@@ -367,6 +367,46 @@ def repair_voxel_hierarchy(root_or_surface: Any) -> RepairReport:
     return report
 
 
+def normalize_voxel_child_transforms(root_or_surface: Any) -> bool:
+    """Fold any non-identity Surface-child local transform up into Voxel Root.
+
+    The architecture requires voxel children (Surface, Volume proxies) to sit at
+    identity local transforms under the root; the live edit preview and brush
+    picking both transform through the root, while the committed mesh renders
+    through the Surface object. If a user rotates the Surface child directly
+    (outside the voxel tools), those disagree and editing shows a rotated ghost.
+
+    This preserves the Surface object's WORLD transform — what the user sees
+    when not editing — by moving it onto the root and zeroing the child.
+    Returns True when a repair was applied.
+    """
+    if bpy is None:
+        return False
+    surface_obj = resolve_surface_object(root_or_surface)
+    if surface_obj is None:
+        return False
+    root = resolve_voxel_root(surface_obj)
+    if root is None or root == surface_obj:
+        return False
+
+    import mathutils
+    local = surface_obj.matrix_local
+    identity = mathutils.Matrix.Identity(4)
+    if all(abs(local[row][col] - identity[row][col]) < 1e-6 for row in range(4) for col in range(4)):
+        return False
+
+    if hasattr(bpy.context, "view_layer") and bpy.context.view_layer is not None:
+        bpy.context.view_layer.update()
+    target_world = surface_obj.matrix_world.copy()
+    root.matrix_world = target_world
+    surface_obj.matrix_local = identity
+    # Proxies and other voxel children keep identity locals, so they inherit
+    # the corrected root transform and stay welded to the surface.
+    if hasattr(bpy.context, "view_layer") and bpy.context.view_layer is not None:
+        bpy.context.view_layer.update()
+    return True
+
+
 def cleanup_stale_voxel_children(repair_missing_roots: bool = True) -> List[str]:
     """Find and clean up orphaned or stale generated children whose root or mesh no longer exists.
 
