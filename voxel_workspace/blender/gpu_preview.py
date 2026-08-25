@@ -482,12 +482,15 @@ def build_voxel_edge_gpu_batch_auto(
     if len(indices) == 0:
         return None
     # build_voxel_edge_mesh_data emits quads in order: each source quad becomes
-    # exactly four consecutive 2-point segments.
+    # exactly four consecutive 2-point segments (8 line vertices). Colors must
+    # match the VERTEX count: one edge color per segment, duplicated onto its
+    # two endpoint vertices.
     seg_per_quad = 4
+    verts_per_segment = 2
     quad_count = len(mesh_buffers.positions) // 4 if mesh_buffers is not None else 0
     if lut is not None and mesh_buffers is not None and len(mesh_buffers.palette_indices) == quad_count:
         quad_rgba = palette_indices_to_rgba(mesh_buffers.palette_indices, lut=lut)
-        seg_rgba = np.repeat(quad_rgba, seg_per_quad, axis=0)
+        seg_rgba = np.repeat(quad_rgba, seg_per_quad * verts_per_segment, axis=0)
         colors = _edge_contrast_rgba(seg_rgba)
     else:
         colors = None
@@ -498,7 +501,13 @@ def build_voxel_edge_gpu_batch_auto(
     attrs = {'pos': positions}
     if colors is not None and len(colors) == len(positions):
         attrs['color'] = np.ascontiguousarray(colors, dtype=np.float32)
-    return batch_for_shader(shader, 'LINES', attrs, indices=indices)
+        try:
+            return batch_for_shader(shader, 'LINES', attrs, indices=indices)
+        except Exception:
+            # Never let a colored-batch mismatch break the edit session; fall
+            # back to the uniform-color edge batch.
+            pass
+    return build_voxel_edge_gpu_batch(mesh_buffers, surface_offset)
 
 
 def build_bounds_gpu_batch(
