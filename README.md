@@ -18,7 +18,7 @@ Current release: **0.9.0**
 
 ## Requirements
 
-- Blender **5.1 or 5.2**.
+- Blender **5.2** (LTS).
 
 ## Installation
 
