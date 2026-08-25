@@ -276,7 +276,7 @@ class BrushSession:
             origin_grid, dir_grid = world_ray_to_grid_ray(
                 origin_world, dir_world, transform_obj.matrix_world, voxel_size=entry.voxel_size
             )
-            picking_grid = self.pick_grid if self.mode in {'ADD_SURFACE', 'ADD_VOLUME', 'PLACE'} and self.pick_grid is not None else entry.grid
+            picking_grid = self.pick_grid if self.pick_grid is not None else entry.grid
             return compute_brush_target(picking_grid, origin_grid, dir_grid, mode=self.mode)
         except Exception:
             return None, None, None
@@ -439,7 +439,11 @@ class BrushSession:
                 return {'PASS_THROUGH'}
             self.is_dragging = True
             self.stroke = VoxelStroke(brick_size=entry.grid.brick_size)
-            self.pick_grid = snapshot_grid(entry.grid) if self.mode in {'ADD_SURFACE', 'ADD_VOLUME', 'PLACE'} else None
+            # Snapshot for every mode (place AND erase/repaint) so the whole
+            # stroke picks against the pre-stroke surface. Otherwise erasing a
+            # voxel mid-drag opens a hole and the ray drills through it,
+            # deleting voxels behind it all the way through the model.
+            self.pick_grid = snapshot_grid(entry.grid)
             cell = brush_cell_for_scene(context.scene, self.mode)
             if target_cell is not None:
                 self.stroke.record(entry.grid, target_cell, cell)
