@@ -442,6 +442,65 @@ def build_voxel_edge_gpu_batch(
     return batch_for_shader(shader, 'LINES', {'pos': positions}, indices=indices)
 
 
+# Auto-contrast edge tuning: edges invert against the voxel fill luminance.
+EDGE_AUTO_DARK = (0.02, 0.02, 0.03)
+EDGE_AUTO_LIGHT = (0.97, 0.97, 0.95)
+
+
+def _edge_contrast_rgba(rgba: np.ndarray) -> np.ndarray:
+    """Map an (N, 4) sRGB RGBA array to contrast-safe edge colors.
+
+    Dark fills get light edges and vice versa; mid-tones get the dark edge,
+    which reads better over Blender's default mid-gray viewport background
+    than white lines on a light model.
+    """
+    rgb = rgba[:, :3]
+    lum = 0.2126 * rgb[:, 0] + 0.7152 * rgb[:, 1] + 0.0722 * rgb[:, 2]
+    fill_is_light = (lum > 0.5).astype(np.float32)[:, None]
+    dark = np.array(EDGE_AUTO_DARK, dtype=np.float32)[None, :]
+    bright = np.array(EDGE_AUTO_LIGHT, dtype=np.float32)[None, :]
+    # Light fills take the dark edge; dark fills take the light edge.
+    color = bright * (1.0 - fill_is_light) + dark * fill_is_light
+    alpha = rgba[:, 3:4] if rgba.shape[1] > 3 else np.ones((len(rgba), 1), dtype=np.float32)
+    return np.concatenate([color, alpha], axis=1)
+
+
+def build_voxel_edge_gpu_batch_auto(
+    mesh_buffers: Optional[MeshBuffers],
+    surface_offset: float = 0.0,
+    lut: Optional[np.ndarray] = None,
+) -> Optional[Any]:
+    """Create a per-vertex-colored line batch with auto-contrast edge colors.
+
+    Each segment inherits its voxel's palette color via the LUT, then flips to
+    the inverse luminance band so black voxels show light seams and light
+    voxels keep dark seams.
+    """
+    if gpu is None or batch_for_shader is None:
+        return None
+    positions, indices = build_voxel_edge_mesh_data(mesh_buffers, surface_offset)
+    if len(indices) == 0:
+        return None
+    # build_voxel_edge_mesh_data emits quads in order: each source quad becomes
+    # exactly four consecutive 2-point segments.
+    seg_per_quad = 4
+    quad_count = len(mesh_buffers.positions) // 4 if mesh_buffers is not None else 0
+    if lut is not None and mesh_buffers is not None and len(mesh_buffers.palette_indices) == quad_count:
+        quad_rgba = palette_indices_to_rgba(mesh_buffers.palette_indices, lut=lut)
+        seg_rgba = np.repeat(quad_rgba, seg_per_quad, axis=0)
+        colors = _edge_contrast_rgba(seg_rgba)
+    else:
+        colors = None
+    try:
+        shader = gpu.shader.from_builtin('FLAT_COLOR')
+    except Exception:
+        return None
+    attrs = {'pos': positions}
+    if colors is not None and len(colors) == len(positions):
+        attrs['color'] = np.ascontiguousarray(colors, dtype=np.float32)
+    return batch_for_shader(shader, 'LINES', attrs, indices=indices)
+
+
 def build_bounds_gpu_batch(
     extent_min: Tuple[int, int, int],
     extent_max: Tuple[int, int, int],
@@ -624,7 +683,7 @@ def update_volume_gpu_preview(
             batches[coord] = batch
         else:
             batches.pop(coord, None)
-        edge_batch = build_voxel_edge_gpu_batch(buf, surface_offset=v_size * 0.001)
+        edge_batch = build_voxel_edge_gpu_batch_auto(buf, surface_offset=v_size * 0.001, lut=lut)
         if edge_batch is not None:
             edges[coord] = edge_batch
         else:
@@ -816,17 +875,32 @@ def _draw_callback() -> None:
                     batch.draw(flat_shader)
 
             # 4. Draw exposed voxel-cell boundaries over the colored faces.
+            # Batches carry per-vertex auto-contrast colors (light seams on
+            # dark voxels, dark seams on light ones) unless the user pinned a
+            # manual override color in the Voxel N-panel.
             scene_props = getattr(getattr(context, "scene", None), "voxel_workspace", None)
             if scene_props is None or scene_props.show_voxel_edges:
                 gpu.state.depth_mask_set(False)
-                uniform_shader.bind()
-                uniform_shader.uniform_float("color", (0.025, 0.025, 0.03, 1.0))
-                for coord, batch in list(entry.gpu_edge_batches.items()):
-                    if batch is not None:
-                        batch.draw(uniform_shader)
-                for coord, batch in list(getattr(entry, "volume_gpu_edge_batches", {}).items()):
-                    if batch is not None:
-                        batch.draw(uniform_shader)
+                override = None
+                if scene_props is not None and not scene_props.voxel_edge_auto_contrast:
+                    override = tuple(scene_props.voxel_edge_color)
+                if override is not None:
+                    uniform_shader.bind()
+                    uniform_shader.uniform_float("color", (*override, 1.0))
+                    for coord, batch in list(entry.gpu_edge_batches.items()):
+                        if batch is not None:
+                            batch.draw(uniform_shader)
+                    for coord, batch in list(getattr(entry, "volume_gpu_edge_batches", {}).items()):
+                        if batch is not None:
+                            batch.draw(uniform_shader)
+                else:
+                    flat_shader.bind()
+                    for coord, batch in list(entry.gpu_edge_batches.items()):
+                        if batch is not None:
+                            batch.draw(flat_shader)
+                    for coord, batch in list(getattr(entry, "volume_gpu_edge_batches", {}).items()):
+                        if batch is not None:
+                            batch.draw(flat_shader)
                 gpu.state.depth_mask_set(True)
 
             # 5. Draw hover face highlight if active

@@ -453,6 +453,26 @@ class VoxelSceneProperties(PropertyGroup):
             default=True,
             update=_display_changed,
         )
+        voxel_edge_auto_contrast: BoolProperty(
+            name="Auto Contrast Edges",
+            description=(
+                "Pick each voxel's edit-edge color automatically: light seams "
+                "on dark voxels, dark seams on light voxels. Turn off to use "
+                "a fixed custom edge color"
+            ),
+            default=True,
+            update=_display_changed,
+        )
+        voxel_edge_color: FloatVectorProperty(
+            name="Edge Color",
+            description="Fixed color for voxel edit edges when Auto Contrast is off",
+            subtype='COLOR',
+            size=4,
+            min=0.0,
+            max=1.0,
+            default=(0.025, 0.025, 0.03, 1.0),
+            update=_display_changed,
+        )
 
 
 def migrate_native_material_domains(mesh: Any) -> bool:

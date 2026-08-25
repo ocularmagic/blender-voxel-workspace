@@ -427,8 +427,22 @@ def _draw_volume_settings(layout: Any, context: Any) -> None:
         obj_export_row.scale_y = 1.2
         obj_export_row.enabled = not empty
         obj_export_row.operator("voxel.export_obj", text="Export Exact Voxel-Lined OBJ", icon="EXPORT")
+
     else:
         vol_box.label(text="No active voxel volume", icon="INFO")
+
+    # Editing display: edge visibility and edge color mode. These are scene
+    # settings, so they render even without an active volume selected.
+    if scene is not None and hasattr(scene, "voxel_workspace"):
+        sc_props_edge = scene.voxel_workspace
+        edge_box = layout.box()
+        edge_box.label(text="Editing Display", icon="MOD_EDGESPLIT")
+        edge_col = edge_box.column(align=True)
+        edge_col.prop(sc_props_edge, "show_voxel_edges")
+        edge_col.prop(sc_props_edge, "voxel_edge_auto_contrast")
+        color_row = edge_col.row()
+        color_row.enabled = not bool(sc_props_edge.voxel_edge_auto_contrast)
+        color_row.prop(sc_props_edge, "voxel_edge_color")
 
 
 def _any_occupied(brick: Any) -> bool:
