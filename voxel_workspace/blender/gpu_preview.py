@@ -892,7 +892,8 @@ def _draw_callback() -> None:
                 gpu.state.depth_mask_set(False)
                 override = None
                 if scene_props is not None and not scene_props.voxel_edge_auto_contrast:
-                    override = tuple(scene_props.voxel_edge_color)
+                    # Picker is RGBA already; never append a fifth component.
+                    override = tuple(scene_props.voxel_edge_color)[:3]
                 if override is not None:
                     uniform_shader.bind()
                     uniform_shader.uniform_float("color", (*override, 1.0))
