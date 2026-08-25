@@ -8,3 +8,4 @@ tests/output/
 tests/blender/user_config/
 tests/blender/user_scripts/
 tests/blender/user_datafiles/
+.hermes/
