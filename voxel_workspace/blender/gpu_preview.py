@@ -778,6 +778,41 @@ def restore_view3d_overlays(context: Optional[Any] = None) -> None:
 
 # --- Draw Handler Callback ---
 
+def _draw_voxel_edge_batches(
+    entry: Any,
+    scene_props: Any,
+    uniform_shader: Any,
+    flat_shader: Any,
+) -> None:
+    """Draw all editing edge batches honoring the edge color mode.
+
+    Auto Contrast on: batches carry per-vertex contrast colors, drawn with the
+    FLAT_COLOR shader. Off: every batch is drawn with the user's fixed override
+    color through UNIFORM_COLOR. Shared by the base pass and the hover redraw
+    so a highlighted face can never repaint edges in a different color mode.
+    """
+    auto = scene_props is None or bool(scene_props.voxel_edge_auto_contrast)
+    if auto:
+        flat_shader.bind()
+        for coord, batch in list(entry.gpu_edge_batches.items()):
+            if batch is not None:
+                batch.draw(flat_shader)
+        for coord, batch in list(getattr(entry, "volume_gpu_edge_batches", {}).items()):
+            if batch is not None:
+                batch.draw(flat_shader)
+    else:
+        # Picker value is RGBA; uniforms take exactly 4 components.
+        color = tuple(scene_props.voxel_edge_color)[:4]
+        uniform_shader.bind()
+        uniform_shader.uniform_float("color", color)
+        for coord, batch in list(entry.gpu_edge_batches.items()):
+            if batch is not None:
+                batch.draw(uniform_shader)
+        for coord, batch in list(getattr(entry, "volume_gpu_edge_batches", {}).items()):
+            if batch is not None:
+                batch.draw(uniform_shader)
+
+
 def _draw_callback() -> None:
     """POST_VIEW GPU draw handler for active voxel volume preview, bounds, grid, and hover face.
     
@@ -890,27 +925,7 @@ def _draw_callback() -> None:
             scene_props = getattr(getattr(context, "scene", None), "voxel_workspace", None)
             if scene_props is None or scene_props.show_voxel_edges:
                 gpu.state.depth_mask_set(False)
-                override = None
-                if scene_props is not None and not scene_props.voxel_edge_auto_contrast:
-                    # Picker is RGBA already; never append a fifth component.
-                    override = tuple(scene_props.voxel_edge_color)[:3]
-                if override is not None:
-                    uniform_shader.bind()
-                    uniform_shader.uniform_float("color", (*override, 1.0))
-                    for coord, batch in list(entry.gpu_edge_batches.items()):
-                        if batch is not None:
-                            batch.draw(uniform_shader)
-                    for coord, batch in list(getattr(entry, "volume_gpu_edge_batches", {}).items()):
-                        if batch is not None:
-                            batch.draw(uniform_shader)
-                else:
-                    flat_shader.bind()
-                    for coord, batch in list(entry.gpu_edge_batches.items()):
-                        if batch is not None:
-                            batch.draw(flat_shader)
-                    for coord, batch in list(getattr(entry, "volume_gpu_edge_batches", {}).items()):
-                        if batch is not None:
-                            batch.draw(flat_shader)
+                _draw_voxel_edge_batches(entry, scene_props, uniform_shader, flat_shader)
                 gpu.state.depth_mask_set(True)
 
             # 5. Draw hover face highlight if active
@@ -969,16 +984,11 @@ def _draw_callback() -> None:
 
                 # 5b. Redraw cell-boundary edges over the highlight so voxels
                 # keep their definition inside a traced/highlighted region.
+                # Same color mode as step 4: auto-contrast per-vertex colors,
+                # or the user's fixed override. Never the old hardcoded black.
                 if scene_props is None or scene_props.show_voxel_edges:
                     gpu.state.depth_mask_set(False)
-                    uniform_shader.bind()
-                    uniform_shader.uniform_float("color", (0.025, 0.025, 0.03, 1.0))
-                    for coord, batch in list(entry.gpu_edge_batches.items()):
-                        if batch is not None:
-                            batch.draw(uniform_shader)
-                    for coord, batch in list(getattr(entry, "volume_gpu_edge_batches", {}).items()):
-                        if batch is not None:
-                            batch.draw(uniform_shader)
+                    _draw_voxel_edge_batches(entry, scene_props, uniform_shader, flat_shader)
                     gpu.state.depth_mask_set(True)
 
             # 5c. Draw pending-erase marks: every voxel touched this stroke
