@@ -41,6 +41,38 @@ def find_entry(mesh: Any, domain: Union[VoxelDomain, str, int], index: int) -> O
     return None
 
 
+def _socket_rgba(socket: Any) -> Optional[Tuple[float, float, float, float]]:
+    """Read an RGBA tuple from a color socket's default_value, or None."""
+    if socket is None:
+        return None
+    try:
+        value = socket.default_value
+        return (float(value[0]), float(value[1]), float(value[2]),
+                float(value[3]) if len(value) > 3 else 1.0)
+    except Exception:
+        return None
+
+
+def _resolve_display_socket_rgba(socket: Any) -> Optional[Tuple[float, float, float, float]]:
+    """Resolve the visible color behind a shader socket, following links.
+
+    Owned Surface materials carry the render-only edge overlay, which links
+    Base Color from 'VoxelSurfaceEdgeMix' and keeps the true palette color in
+    that Mix's Color1 (input index 1). A linked socket's default_value is a
+    dead fallback, so it must not be used directly.
+    """
+    if socket is None:
+        return None
+    if not socket.is_linked:
+        return _socket_rgba(socket)
+    link = next(iter(socket.links), None)
+    source = getattr(link, "from_socket", None)
+    node = getattr(source, "node", None)
+    if node is not None and getattr(node, "name", "") == "VoxelSurfaceEdgeMix":
+        return _socket_rgba(node.inputs[1])
+    return _socket_rgba(source)
+
+
 def display_rgba_from_entry(entry: Any, palette_type: str = "SURFACE") -> Tuple[float, float, float, float]:
     """Return GPU/brush RGBA from the bound material, else the stored display color."""
     fallback = (0.8, 0.8, 0.8, 1.0)
@@ -62,8 +94,9 @@ def display_rgba_from_entry(entry: Any, palette_type: str = "SURFACE") -> Tuple[
                     continue
                 for key in ("Color", "Scattering Color", "Absorption Color"):
                     if key in node.inputs:
-                        value = node.inputs[key].default_value
-                        return (float(value[0]), float(value[1]), float(value[2]), 1.0)
+                        resolved = _resolve_display_socket_rgba(node.inputs[key])
+                        if resolved is not None:
+                            return resolved
                 break
         else:
             bsdf = tree.nodes.get("Principled BSDF")
@@ -73,9 +106,18 @@ def display_rgba_from_entry(entry: Any, palette_type: str = "SURFACE") -> Tuple[
                         bsdf = node
                         break
             if bsdf is not None and "Base Color" in bsdf.inputs:
-                value = bsdf.inputs["Base Color"].default_value
-                alpha = float(bsdf.inputs["Alpha"].default_value) if "Alpha" in bsdf.inputs else 1.0
-                return (float(value[0]), float(value[1]), float(value[2]), alpha)
+                resolved = _resolve_display_socket_rgba(bsdf.inputs["Base Color"])
+                if resolved is not None:
+                    return resolved
+                alpha = 1.0
+                if "Alpha" in bsdf.inputs and not bsdf.inputs["Alpha"].is_linked:
+                    try:
+                        alpha = float(bsdf.inputs["Alpha"].default_value)
+                    except Exception:
+                        pass
+                fallback = tuple(float(c) for c in getattr(entry, "color", ()) or ()) if entry is not None else None
+                if fallback and len(fallback) >= 3:
+                    return (fallback[0], fallback[1], fallback[2], alpha)
     except Exception:
         pass
     return fallback

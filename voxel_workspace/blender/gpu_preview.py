@@ -597,10 +597,12 @@ def update_volume_gpu_preview(
             return
         if isinstance(grid, TaggedVoxelGrid):
             core = np.where(brick.domains == int(domain), brick.indices, 0).astype(np.uint8)
-            # Editing preview treats every tagged voxel as occupied for neighbor
-            # culling. This omits coplanar cross-domain contact faces while the
-            # committed Surface mesh and closed Volume proxies remain unchanged.
-            apron = grid.read_index_apron(coord)
+            # Mesh each domain independently with a domain-filtered apron, matching
+            # sync_volume_mesh's committed meshing. An unfiltered apron would cull
+            # faces at cross-domain contacts (e.g. SURFACE voxels flush against
+            # VOLUME voxels after an interior fill), hiding them in the viewport
+            # even though they exist in the rendered mesh.
+            apron = grid.read_index_apron(coord, domain_filter=domain)
         else:
             if domain == VoxelDomain.VOLUME:
                 core = np.zeros((s, s, s), dtype=np.uint8)

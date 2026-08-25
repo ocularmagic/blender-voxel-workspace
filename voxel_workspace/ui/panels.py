@@ -152,6 +152,17 @@ def draw_typed_palette(
     mesh = v_ctx.mesh if is_voxel else None
     pal_tab = getattr(palette_props, "active_palette_tab", "SURFACE").upper()
 
+    # Material socket edits (Base Color etc.) bypass the palette RNA update
+    # callbacks, so the cached GPU display LUTs can go stale. Diff-and-refresh
+    # here; it rebuilds batches only when a bound material actually changed.
+    if mesh is not None:
+        try:
+            from ..blender.gpu_preview import refresh_material_display_colors
+            from ..blender.runtime import get_or_load
+            refresh_material_display_colors(get_or_load(mesh))
+        except Exception:
+            pass
+
     # Material Type / Palette Selector Tabs. Operators keep the typed palette
     # and the active Surface/Volume placement tool synchronized both ways.
     tab_row = layout.row(align=True)

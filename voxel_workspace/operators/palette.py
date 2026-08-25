@@ -1696,6 +1696,28 @@ class VOXEL_OT_fill_interior(Operator):
             default="SURFACE",
         )
 
+    @staticmethod
+    def _fill_full_extent(grid, domain, index):
+        """Fill every cell of the volume extent with (domain, index). Returns (count, changed_bricks)."""
+        changed_bricks: Set[BrickCoord] = set()
+        ex0, ey0, ez0 = grid.extent_min
+        ex1, ey1, ez1 = grid.extent_max_exclusive
+        count = 0
+        brick_size = int(grid.brick_size)
+        for x in range(int(ex0), int(ex1)):
+            for y in range(int(ey0), int(ey1)):
+                for z in range(int(ez0), int(ez1)):
+                    grid.set_cell((x, y, z), domain, index)
+                    bcoord, _ = split_coord((x, y, z), brick_size)
+                    changed_bricks.add(bcoord)
+                    count += 1
+        return count, changed_bricks
+
+    def draw(self, context):
+        # Suppress the redo/adjust panel: palette_type is set by the UI before
+        # the button press, so there is nothing to adjust after the fact.
+        pass
+
     def execute(self, context):
         v_ctx = resolve_volume_context(context)
         if v_ctx is None or v_ctx.mesh is None:
@@ -1720,22 +1742,26 @@ class VOXEL_OT_fill_interior(Operator):
             return {'CANCELLED'}
         grid = entry.grid
 
-        target, lo = _interior_target_mask(grid)
-        if target is None or not bool(target.any()):
-            self.report({'INFO'}, f"No interior voxels to fill for {pal_type.lower()} palette")
-            return {'CANCELLED'}
-
         from ..core.tagged_grid import VoxelDomain
-        from ..core.coords import join_coord
-
         domain = VoxelDomain.VOLUME if pal_type == "VOLUME" else VoxelDomain.SURFACE
-        coords = np.argwhere(target)
-        changed_bricks: Set[BrickCoord] = set()
-        for c in coords:
-            global_c = (int(lo[0]) + int(c[0]), int(lo[1]) + int(c[1]), int(lo[2]) + int(c[2]))
-            grid.set_cell(global_c, domain, index)
-            bcoord, _ = split_coord(global_c, int(grid.brick_size))
-            changed_bricks.add(bcoord)
+
+        has_voxels = any(not brick.is_empty() for brick in grid.bricks.values())
+        if not has_voxels:
+            count, changed_bricks = self._fill_full_extent(grid, domain, index)
+        else:
+            target, lo = _interior_target_mask(grid)
+            if target is None or not bool(target.any()):
+                self.report({'INFO'}, f"No interior voxels to fill for {pal_type.lower()} palette")
+                return {'CANCELLED'}
+
+            coords = np.argwhere(target)
+            changed_bricks: Set[BrickCoord] = set()
+            for c in coords:
+                global_c = (int(lo[0]) + int(c[0]), int(lo[1]) + int(c[1]), int(lo[2]) + int(c[2]))
+                grid.set_cell(global_c, domain, index)
+                bcoord, _ = split_coord(global_c, int(grid.brick_size))
+                changed_bricks.add(bcoord)
+            count = int(len(coords))
         if not changed_bricks:
             self.report({'INFO'}, "No interior voxels changed")
             return {'CANCELLED'}
@@ -1754,13 +1780,12 @@ class VOXEL_OT_fill_interior(Operator):
         update_volume_gpu_preview(entry, dirty_only=True, dirty_bricks=changed_bricks)
         tag_redraw_all_viewports()
 
-        count = int(len(coords))
         if bpy is not None and hasattr(bpy.ops, "ed") and hasattr(bpy.ops.ed, "undo_push"):
             try:
                 bpy.ops.ed.undo_push(message=f"Fill Interior ({pal_type.title()})")
             except Exception:
                 pass
-        self.report({'INFO'}, f"Filled {count} interior voxels")
+        self.report({'INFO'}, f"Filled {count} voxels")
         return {'FINISHED'}
 
 
