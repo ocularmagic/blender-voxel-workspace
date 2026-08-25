@@ -142,23 +142,33 @@ def recolor_preview_batches(
     palette_type: str,
     lut: Optional[np.ndarray] = None,
 ) -> None:
-    """Rebuild color-baked batches from cached CPU buffers without remeshing."""
+    """Rebuild color-baked batches from cached CPU buffers without remeshing.
+
+    Edge batches are rebuilt alongside the fill batches so auto-contrast seam
+    colors follow material edits immediately.
+    """
     if entry is None:
         return
     domain = str(palette_type).upper()
     if domain == "VOLUME":
         buffers = entry.volume_preview_buffers
         batches = entry.volume_gpu_batches
+        edge_batches = getattr(entry, "volume_gpu_edge_batches", {})
     else:
         buffers = entry.surface_preview_buffers
         batches = entry.gpu_batches
+        edge_batches = getattr(entry, "gpu_edge_batches", {})
     if lut is None:
         lut = get_palette_rgba_lut(entry, domain)
     batches.clear()
+    edge_batches.clear()
     for coord, mesh_buffers in buffers.items():
         batch = build_brick_gpu_batch(mesh_buffers, lut=lut)
         if batch is not None:
             batches[coord] = batch
+        edge_batch = build_voxel_edge_gpu_batch_auto(mesh_buffers, surface_offset=0.001, lut=lut)
+        if edge_batch is not None:
+            edge_batches[coord] = edge_batch
 
 
 def refresh_material_display_colors(entry: Any) -> bool:
@@ -487,10 +497,19 @@ def build_voxel_edge_gpu_batch_auto(
     # two endpoint vertices.
     seg_per_quad = 4
     verts_per_segment = 2
+    verts_per_quad = seg_per_quad * verts_per_segment
     quad_count = len(mesh_buffers.positions) // 4 if mesh_buffers is not None else 0
-    if lut is not None and mesh_buffers is not None and len(mesh_buffers.palette_indices) == quad_count:
-        quad_rgba = palette_indices_to_rgba(mesh_buffers.palette_indices, lut=lut)
-        seg_rgba = np.repeat(quad_rgba, seg_per_quad * verts_per_segment, axis=0)
+    # mesh_visible_faces stores palette_indices PER VERTEX (4 per quad), so
+    # take every fourth entry to recover one color per quad.
+    if (
+        lut is not None
+        and mesh_buffers is not None
+        and len(mesh_buffers.palette_indices) == len(mesh_buffers.positions)
+        and quad_count > 0
+    ):
+        quad_indices = np.asarray(mesh_buffers.palette_indices).reshape(-1, 4)[:, 0]
+        quad_rgba = palette_indices_to_rgba(quad_indices, lut=lut)
+        seg_rgba = np.repeat(quad_rgba, verts_per_quad, axis=0)
         colors = _edge_contrast_rgba(seg_rgba)
     else:
         colors = None
