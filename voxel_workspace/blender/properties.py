@@ -304,6 +304,57 @@ class VoxelSceneProperties(PropertyGroup):
             default=1.0,
             min=0.0001,
         )
+        resize_size_x: IntProperty(
+            name="Size X",
+            description="New X dimension in voxels for the active volume",
+            default=16,
+            min=1,
+            max=512,
+        )
+        resize_size_y: IntProperty(
+            name="Size Y",
+            description="New Y dimension in voxels for the active volume",
+            default=16,
+            min=1,
+            max=512,
+        )
+        resize_size_z: IntProperty(
+            name="Size Z",
+            description="New Z dimension in voxels for the active volume",
+            default=16,
+            min=1,
+            max=512,
+        )
+        resize_anchor_x: EnumProperty(
+            name="X Anchor",
+            description="Where X grows/shrinks from",
+            items=[
+                ("CENTER", "Center", "Keep this axis centered (like creation)"),
+                ("MIN", "Min", "Pin the low face; move the high face"),
+                ("MAX", "Max", "Pin the high face; move the low face"),
+            ],
+            default="CENTER",
+        )
+        resize_anchor_y: EnumProperty(
+            name="Y Anchor",
+            description="Where Y grows/shrinks from",
+            items=[
+                ("CENTER", "Center", "Keep this axis centered (like creation)"),
+                ("MIN", "Min", "Pin the low face; move the high face"),
+                ("MAX", "Max", "Pin the high face; move the low face"),
+            ],
+            default="CENTER",
+        )
+        resize_anchor_z: EnumProperty(
+            name="Z Anchor",
+            description="Where Z grows/shrinks from",
+            items=[
+                ("CENTER", "Center", "Keep this axis centered"),
+                ("MIN", "Min", "Pin the low face; move the high face"),
+                ("MAX", "Max", "Pin the high face; move the low face"),
+            ],
+            default="MIN",
+        )
         active_palette_index: IntProperty(
             name="Active Palette Index",
             description="Stored color index used by the voxel brush (legacy alias)",

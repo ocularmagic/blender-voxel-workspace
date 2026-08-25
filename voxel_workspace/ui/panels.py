@@ -387,6 +387,28 @@ def _draw_volume_settings(layout: Any, context: Any) -> None:
         import_row = vol_box.row()
         import_row.scale_y = 1.2
         import_row.operator("voxel.import_glb", text="Import GLB into Volume", icon="IMPORT")
+
+        # Resize section: only meaningful when a volume exists
+        resize_box = vol_box.box()
+        resize_box.label(text="Resize Volume", icon="FULLSCREEN_ENTER")
+        rcol = resize_box.column(align=True)
+        rrow = rcol.row(align=True)
+        rrow.prop(scene.voxel_workspace, "resize_size_x", text="X")
+        rrow.prop(scene.voxel_workspace, "resize_anchor_x", text="")
+        rrow = rcol.row(align=True)
+        rrow.prop(scene.voxel_workspace, "resize_size_y", text="Y")
+        rrow.prop(scene.voxel_workspace, "resize_anchor_y", text="")
+        rrow = rcol.row(align=True)
+        rrow.prop(scene.voxel_workspace, "resize_size_z", text="Z")
+        rrow.prop(scene.voxel_workspace, "resize_anchor_z", text="")
+        rop = resize_box.operator("voxel.resize_volume", text="Apply Resize", icon="ARROW_LEFTRIGHT")
+        rop.size_x = scene.voxel_workspace.resize_size_x
+        rop.size_y = scene.voxel_workspace.resize_size_y
+        rop.size_z = scene.voxel_workspace.resize_size_z
+        rop.anchor_x = scene.voxel_workspace.resize_anchor_x
+        rop.anchor_y = scene.voxel_workspace.resize_anchor_y
+        rop.anchor_z = scene.voxel_workspace.resize_anchor_z
+
         export_row = vol_box.row()
         export_row.scale_y = 1.2
         export_row.operator("voxel.export_slices", text="Export Voxel Slices", icon="EXPORT")

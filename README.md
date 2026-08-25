@@ -71,4 +71,6 @@ settings at the time of export.
 
 ## License
 
-GPL-3.0-or-later. See [LICENSE](LICENSE).
+This add-on is free software licensed under **GPL-3.0-or-later** — the same
+license as Blender. As a Blender add-on, it is a derivative work of Blender
+and must remain GPL-compatible. See [LICENSE](LICENSE).

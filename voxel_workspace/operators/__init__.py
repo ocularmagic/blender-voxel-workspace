@@ -3,6 +3,10 @@ from typing import List, Type
 from .create_volume import (
     VOXEL_OT_create_volume,
 )
+from .resize_volume import (
+    VOXEL_OT_resize_volume,
+    RESIZE_OPERATOR_CLASSES,
+)
 from .edit_session import (
     VOXEL_OT_start_surface,
     VOXEL_OT_start_volume,
@@ -54,6 +58,7 @@ from .shelf import (
 
 OPERATOR_CLASSES: List[Type] = [
     VOXEL_OT_create_volume,
+    *RESIZE_OPERATOR_CLASSES,
     *EDIT_SESSION_OPERATOR_CLASSES,
     *BRUSH_OPERATOR_CLASSES,
     *PALETTE_OPERATOR_CLASSES,
