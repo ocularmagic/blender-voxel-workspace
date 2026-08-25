@@ -919,6 +919,25 @@ class VOXEL_OT_add_palette_color(Operator):
 
         drop_palette_lut(props.uuid)
 
+        # Surface materials are born with their final node graph (edge overlay
+        # included) so the preview never jumps from flat color to mixed.
+        if pal_type == "SURFACE":
+            try:
+                from ..blender.surface_edges import sync_surface_edge_materials
+                sync_surface_edge_materials(mesh)
+            except Exception:
+                pass
+
+        # Generate the material preview now (operator context, not draw path)
+        # so template_preview shows the real material immediately and tracks
+        # socket color edits right away.
+        material = getattr(item, "material", None)
+        if material is not None:
+            try:
+                material.preview_ensure()
+            except Exception:
+                pass
+
         # Set as active color in scene
         if pal_type == "VOLUME":
             context.scene.voxel_workspace.active_volume_palette_index = new_index
@@ -1003,6 +1022,21 @@ class VOXEL_OT_duplicate_palette_color(Operator):
         item.name = f"{src_entry.name} (Copy)" if src_entry.name else f"Color {new_index}"
 
         drop_palette_lut(props.uuid)
+
+        # Same birth-state guarantee as Add: duplicated surface materials keep
+        # their edge-overlay graph, and the preview exists immediately.
+        if pal_type == "SURFACE":
+            try:
+                from ..blender.surface_edges import sync_surface_edge_materials
+                sync_surface_edge_materials(mesh)
+            except Exception:
+                pass
+        material = getattr(item, "material", None)
+        if material is not None:
+            try:
+                material.preview_ensure()
+            except Exception:
+                pass
 
         if pal_type == "VOLUME":
             context.scene.voxel_workspace.active_volume_palette_index = new_index
