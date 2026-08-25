@@ -3,7 +3,7 @@
 Voxel Workspace is a Blender add-on for creating and editing bounded voxel
 models with separate Surface and Volume voxel types.
 
-Current release: **0.9.0**
+Current release: **0.11.0**
 
 ## What you can do
 
