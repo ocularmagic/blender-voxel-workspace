@@ -164,6 +164,41 @@ class VOXEL_OT_create_volume(Operator):
             extent_max=extent_max,
         )
 
+        # 6b. Birth the default Surface palette + material NOW, with its final
+        # node graph and generated preview, and select it as the active paint
+        # color. Without this the first painted voxels reference a palette
+        # entry whose material does not exist yet ("ghost" voxels) until a
+        # palette chip is clicked.
+        try:
+            from ..blender.properties import ensure_palette
+            from ..blender.material_domains import get_palette
+            from ..blender.surface_edges import sync_surface_edge_materials
+
+            ensure_palette(mesh)
+            surface_palette = get_palette(mesh, "SURFACE")
+            default_entry = next((e for e in surface_palette if int(e.index) == 1), None)
+            if default_entry is not None and getattr(default_entry, "material", None) is not None:
+                try:
+                    sync_surface_edge_materials(mesh)
+                except Exception:
+                    pass
+                try:
+                    default_entry.material.preview_ensure()
+                except Exception:
+                    pass
+            props = context.scene.voxel_workspace
+            props.active_surface_palette_index = 1
+            props.active_palette_index = 1
+            if hasattr(props, "active_palette_choice"):
+                props.active_palette_choice = "1"
+            if hasattr(props, "surface_swatch_list_index") and surface_palette:
+                for list_index, entry_item in enumerate(surface_palette):
+                    if int(entry_item.index) == 1:
+                        props.surface_swatch_list_index = list_index
+                        break
+        except Exception:
+            pass
+
         # 7. Select and activate root object (generated children unselected)
         if hasattr(context, "view_layer") and context.view_layer is not None:
             for o in context.view_layer.objects.selected:

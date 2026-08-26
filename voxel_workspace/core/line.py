@@ -8,7 +8,7 @@ import numpy as np
 from ..constants import VoxelCoord
 from .grid import VoxelGrid
 from .tagged_grid import TaggedVoxelGrid
-from .dda import trace_grid, intersect_work_plane
+from .dda import trace_grid, intersect_work_plane, intersect_exit_work_plane
 
 
 def clamp_to_extent(grid: Union[VoxelGrid, TaggedVoxelGrid], coord: VoxelCoord) -> VoxelCoord:
@@ -124,11 +124,18 @@ def compute_brush_target(
             return hit.cell, hit.cell, hit.normal
 
     if is_add:
-        cell = intersect_work_plane(origin_grid, direction_grid, axis=2, slice_index=0)
-        if cell is not None:
-            if not grid.in_extent(cell):
-                cell = clamp_to_extent(grid, cell)
-            return cell, cell, (0, 0, -1)
+        # No occupied voxel under the cursor: draw on whichever interior wall
+        # the view ray EXITS through (the wall facing the viewer). Old builds
+        # pinned this to the Z=0 floor only.
+        hit_plane = intersect_exit_work_plane(
+            origin_grid,
+            direction_grid,
+            grid.extent_min,
+            grid.extent_max_exclusive,
+        )
+        if hit_plane is not None:
+            cell, face_normal = hit_plane
+            return cell, cell, face_normal
 
     return None, None, None
 

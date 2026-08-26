@@ -199,3 +199,70 @@ def intersect_work_plane(
     cell = [math.floor(value) for value in point]
     cell[axis_index] = int(slice_index)
     return tuple(cell)  # type: ignore[return-value]
+
+
+def intersect_exit_work_plane(
+    origin_grid: Sequence[float],
+    direction_grid: Sequence[float],
+    extent_min: Sequence[int],
+    extent_max_exclusive: Sequence[int],
+) -> tuple[VoxelCoord, VoxelCoord] | None:
+    """Intersect a forward ray with the interior work plane it EXITS through.
+
+    Instead of pinning drawing to the Z=0 floor, this finds the bounding-box
+    face the ray leaves through (its far-side exit face). That face is the
+    wall whose interior surface fronts the viewer, so it is the correct
+    drawable plane when looking into an empty volume. Faces seen from their
+    backsides (entry faces) never win this test.
+
+    Returns ``(cell, face_normal)`` where ``cell`` is the last grid cell
+    inside the extent on that wall and ``face_normal`` is the OUTWARD normal
+    of the wall face (matching the historical floor convention of
+    ``(0, 0, -1)`` for the bottom plane). Returns ``None`` when the ray runs
+    parallel outside the extent slab or has no forward intersection.
+    """
+    direction = _normalized(direction_grid)
+    if direction is None:
+        return None
+    origin = tuple(float(value) for value in origin_grid)
+
+    t_exit = math.inf
+    exit_axis = -1
+    exit_at_upper = False
+    for axis in range(3):
+        component = direction[axis]
+        lower = float(extent_min[axis])
+        upper = float(extent_max_exclusive[axis])
+        if component == 0.0:
+            if origin[axis] < lower or origin[axis] > upper:
+                return None
+            continue
+        t_lo = (lower - origin[axis]) / component
+        t_hi = (upper - origin[axis]) / component
+        at_upper = True
+        if t_hi < t_lo:
+            t_lo, t_hi = t_hi, t_lo
+            at_upper = False
+        # t_hi is the FAR intersection (exit); the far plane sits at the
+        # upper bound when travelling positively, at the lower otherwise.
+        if t_hi < t_exit:
+            t_exit = t_hi
+            exit_axis = axis
+            exit_at_upper = at_upper
+
+    if exit_axis < 0:
+        return None
+
+    point = tuple(origin[i] + direction[i] * t_exit for i in range(3))
+    cell = [
+        int(min(max(math.floor(point[a]), int(extent_min[a])), int(extent_max_exclusive[a]) - 1))
+        for a in range(3)
+    ]
+    if exit_at_upper:
+        cell[exit_axis] = int(extent_max_exclusive[exit_axis]) - 1
+    else:
+        cell[exit_axis] = int(extent_min[exit_axis])
+
+    face_normal = [0, 0, 0]
+    face_normal[exit_axis] = 1 if exit_at_upper else -1
+    return tuple(cell), tuple(face_normal)  # type: ignore[return-value]

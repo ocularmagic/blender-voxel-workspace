@@ -1,5 +1,6 @@
 """Depth-aware per-brick GPU viewport preview, overlay management, and work grid drawing."""
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Sequence, Tuple
+import math
 import numpy as np
 
 try:
@@ -304,6 +305,106 @@ def build_work_grid_mesh_data(
     return verts, lines
 
 
+def build_face_grid_mesh_data(
+    extent_min: Tuple[int, int, int],
+    extent_max: Tuple[int, int, int],
+    voxel_size: float = 1.0,
+    axis: int = 2,
+    at_upper: bool = False,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Generate vertices/line indices for ONE bounding-box face's wall grid.
+
+    ``axis``/``at_upper`` select which of the six interior walls (e.g. axis 2
+    upper = ceiling, axis 2 lower = floor). Lines span the two tangent axes
+    at every whole-cell step so the wall reads as a drawable cell sheet.
+    """
+    step = voxel_size
+    bounds_lo = [extent_min[a] * step for a in range(3)]
+    bounds_hi = [extent_max[a] * step for a in range(3)]
+    fixed = bounds_hi[axis] if at_upper else bounds_lo[axis]
+    tangent_axes = [a for a in range(3) if a != axis]
+    t1, t2 = tangent_axes[0], tangent_axes[1]
+
+    verts_list: list[list[float]] = []
+    lines_list: list[list[int]] = []
+    idx = 0
+
+    def _add_line(p_a: list[float], p_b: list[float]) -> None:
+        nonlocal idx
+        verts_list.append(p_a)
+        verts_list.append(p_b)
+        lines_list.append([idx, idx + 1])
+        idx += 2
+
+    vals_t1 = np.arange(extent_min[t1], extent_max[t1] + 1, dtype=np.float32) * step
+    vals_t2 = np.arange(extent_min[t2], extent_max[t2] + 1, dtype=np.float32) * step
+
+    # Lines running along t2 at constant t1.
+    for value in vals_t1:
+        v = float(value)
+        _add_line([v if a == t1 else fixed if a == axis else bounds_lo[t2] for a in range(3)],
+                  [v if a == t1 else fixed if a == axis else bounds_hi[t2] for a in range(3)])
+    # Lines running along t1 at constant t2.
+    for value in vals_t2:
+        v = float(value)
+        _add_line([v if a == t2 else fixed if a == axis else bounds_lo[t1] for a in range(3)],
+                  [v if a == t2 else fixed if a == axis else bounds_hi[t1] for a in range(3)])
+
+    return (
+        np.array(verts_list, dtype=np.float32),
+        np.array(lines_list, dtype=np.int32),
+    )
+
+
+def build_wall_grid_batches(
+    extent_min: Tuple[int, int, int],
+    extent_max: Tuple[int, int, int],
+    voxel_size: float = 1.0,
+) -> Dict[Tuple[int, bool], Optional[Any]]:
+    """Build one line batch per bounding-box face (all six interior walls)."""
+    if gpu is None or batch_for_shader is None:
+        return {}
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    batches: Dict[Tuple[int, bool], Optional[Any]] = {}
+    for axis in range(3):
+        for at_upper in (False, True):
+            verts, lines = build_face_grid_mesh_data(extent_min, extent_max, voxel_size, axis, at_upper)
+            if len(lines) == 0:
+                batches[(axis, at_upper)] = None
+                continue
+            try:
+                batches[(axis, at_upper)] = batch_for_shader(shader, 'LINES', {'pos': verts}, indices=lines)
+            except Exception:
+                batches[(axis, at_upper)] = None
+    return batches
+
+
+def visible_wall_faces(view_direction_world: Sequence[float]) -> list[Tuple[int, bool]]:
+    """Return the wall faces whose INTERIOR side fronts the viewer.
+
+    A wall shows its grid exactly when the view ray EXITS through it: a
+    positive view component exits through the upper wall on that axis, a
+    negative one through the lower. Faces seen through their backsides
+    (entry faces) are omitted. Requires an accurate world-space gaze vector
+    from ``_current_view_direction``.
+    """
+    v = tuple(float(c) for c in view_direction_world)
+    length = math.sqrt(sum(c * c for c in v))
+    if length < 1e-9 or not math.isfinite(length):
+        return [(2, False)]  # Unknown orientation: fall back to the floor plane.
+
+    vx, vy, vz = (c / length for c in v)
+    view_vecs = {0: vx, 1: vy, 2: vz}
+    result: list[Tuple[int, bool]] = []
+    for axis in range(3):
+        component = view_vecs[axis]
+        if component > 1e-6:
+            result.append((axis, True))
+        elif component < -1e-6:
+            result.append((axis, False))
+    return result
+
+
 def build_hover_face_mesh_data(
     voxel_coord: Tuple[int, int, int],
     face_normal: Tuple[int, int, int] = (0, 0, 1),
@@ -587,8 +688,45 @@ _PENDING_ERASE: List[Tuple[Tuple[int, int, int], Tuple[int, int, int]]] = []
 _SAVED_OVERLAYS: Dict[int, Dict[str, Any]] = {}
 _DRAW_HANDLER: Optional[Any] = None
 _ACTIVE_BOUNDS_BATCH: Optional[Any] = None
-_ACTIVE_GRID_BATCH: Optional[Any] = None
+_ACTIVE_GRID_BATCH: Optional[Dict[Tuple[int, bool], Optional[Any]]] = None
 _CACHED_VOLUME_KEY: Optional[Tuple[str, Tuple[int, int, int], Tuple[int, int, int], float]] = None
+
+
+def _current_view_direction(context: Any) -> tuple[float, float, float]:
+    """World-space forward direction of the VIEWPORT BEING DRAWN (or safe default).
+
+    Inside a POST_VIEW draw handler, ``bpy.context`` is overridden to the
+    region currently rendering, so ``context.region_data`` identifies the
+    correct view. The camera's forward axis in world coordinates is the
+    negated third column of ``view_matrix`` (see note in body).
+    """
+    try:
+        region_data = getattr(context, "region_data", None)
+        if region_data is None:
+            space = getattr(context, "space_data", None)
+            if space is not None and hasattr(space, "region_3d"):
+                region_data = space.region_3d
+        if region_data is None:
+            area = getattr(context, "area", None)
+            if area is not None and area.type == 'VIEW_3D':
+                region_data = area.spaces.active.region_3d
+        if region_data is None:
+            return (0.0, 0.0, -1.0)
+        matrix = region_data.view_matrix
+        # Ground truth verified against bpy_extras.view3d_utils.
+        # region_2d_to_vector_3d (the same call brush picking uses):
+        # the viewport forward ray equals NEGATED ROW 2 of
+        # RegionView3D.view_matrix, because view_matrix is the TRANSPOSED
+        # rotation (world -> view). Reading down column 2 instead yields a
+        # transposed vector whose X/Y components are swapped -- which flips
+        # exactly the two side walls' facing tests while leaving Z correct.
+        forward = (-matrix[2][0], -matrix[2][1], -matrix[2][2])
+        length = math.sqrt(sum(c * c for c in forward))
+        if length > 1e-9:
+            return (forward[0] / length, forward[1] / length, forward[2] / length)
+    except Exception:
+        pass
+    return (0.0, 0.0, -1.0)
 
 
 def set_hover_state(
@@ -887,7 +1025,7 @@ def _draw_callback() -> None:
     except Exception:
         return
 
-    # Helper batch lookups for bounds and work grid
+    # Helper batch lookups for bounds and work-grid walls
     global _ACTIVE_BOUNDS_BATCH, _ACTIVE_GRID_BATCH, _CACHED_VOLUME_KEY
     grid = entry.grid
     extent_min = grid.extent_min
@@ -897,7 +1035,7 @@ def _draw_callback() -> None:
 
     if _CACHED_VOLUME_KEY != cache_key or _ACTIVE_BOUNDS_BATCH is None:
         _ACTIVE_BOUNDS_BATCH = build_bounds_gpu_batch(extent_min, extent_max, v_size)
-        _ACTIVE_GRID_BATCH = build_work_grid_gpu_batch(extent_min, extent_max, v_size)
+        _ACTIVE_GRID_BATCH = build_wall_grid_batches(extent_min, extent_max, v_size)
         _CACHED_VOLUME_KEY = cache_key
 
     # Preserve all queryable GPU state touched by this handler. Blender's
@@ -915,11 +1053,17 @@ def _draw_callback() -> None:
         with gpu.matrix.push_pop():
             gpu.matrix.multiply_matrix(obj.matrix_world)
 
-            # 1. Draw Z=0 work grid
-            if _ACTIVE_GRID_BATCH is not None:
+            # 1. Draw the interior wall grid on faces whose inner surface
+            # fronts the viewer (the ray's exit face). Walls seen through
+            # their backsides draw nothing and are not drawable.
+            if _ACTIVE_GRID_BATCH:
+                view_direction = _current_view_direction(context)
                 uniform_shader.bind()
                 uniform_shader.uniform_float("color", (0.35, 0.35, 0.4, 0.6))
-                _ACTIVE_GRID_BATCH.draw(uniform_shader)
+                for face_key in visible_wall_faces(view_direction):
+                    batch = _ACTIVE_GRID_BATCH.get(face_key)
+                    if batch is not None:
+                        batch.draw(uniform_shader)
 
             # 2. Draw volume bounding box wireframe
             if _ACTIVE_BOUNDS_BATCH is not None:

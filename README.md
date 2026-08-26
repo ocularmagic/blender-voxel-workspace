@@ -3,12 +3,13 @@
 Voxel Workspace is a Blender add-on for creating and editing bounded voxel
 models with separate Surface and Volume voxel types.
 
-Current release: **0.16.0**
+Current release: **0.17.0**
 
 ## What you can do
 
 - Create voxel fields with adjustable dimensions and voxel size.
 - Paint Surface voxels and Volume voxels independently.
+- Draw on the interior of ANY bounding-box wall, not just the floor.
 - Use separate editable color palettes for Surface and Volume materials.
 - Add, erase, and repaint voxels with Blender undo support.
 - Import GLB and glTF models and convert them into voxel fields.
@@ -44,6 +45,20 @@ Current release: **0.16.0**
 Choosing a palette color or clicking a volume icon does not activate a voxel
 placement tool by itself. The **Add Surface** and **Add Volume** tools must be
 selected from the Asset Shelf.
+
+## Drawing on interior walls
+
+When an empty (or partly empty) volume is in front of you, placement lands on
+whichever bounding-box wall the view ray exits through — the wall whose
+interior surface faces you. Looking down draws on the floor; looking up from
+below draws on the ceiling; orbiting around the side moves drawing onto that
+side wall automatically.
+
+The reference grid follows the same rule: grid lines appear only on walls
+whose inner surface fronts the viewer. A wall seen through its backside (for
+example the ceiling when looking down) shows no grid and cannot be drawn on.
+Occupied voxels always take priority — placing against existing geometry,
+mirroring, erasing, and repainting all behave exactly as before.
 
 ## Adjusting the voxel root size
 
