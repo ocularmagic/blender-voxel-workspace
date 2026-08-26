@@ -84,6 +84,11 @@ def palette_enum_items(_self=None, _context=None):
     return items
 
 
+def get_preview_collection() -> Any:
+    """Return the shared preview collection (or None before registration)."""
+    return _preview_collection
+
+
 def tool_icon_id(name: str) -> int:
     """Return the preview icon id for a packaged toolbar PNG, or 0."""
     if _preview_collection is None:

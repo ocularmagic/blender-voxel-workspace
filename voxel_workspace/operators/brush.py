@@ -16,6 +16,7 @@ from ..constants import VoxelCoord
 from ..core.coords import split_coord
 from ..core.commands import VoxelStroke, apply_brush_value
 from ..core.tagged_grid import TaggedVoxelGrid, VoxelCell, VoxelDomain, CELL_EMPTY
+from .mirror import live_mirror_axes, mirrored_cells_for_axes
 from ..core.line import (
     line_3d,
     compute_brush_target,
@@ -455,6 +456,7 @@ class BrushSession:
             # deleting voxels behind it all the way through the model.
             self.pick_grid = snapshot_grid(entry.grid)
             cell = brush_cell_for_scene(context.scene, self.mode)
+            axes = live_mirror_axes(context.scene)
             if target_cell is not None:
                 self.stroke.record(entry.grid, target_cell, cell)
                 if self.mode == 'ERASE':
@@ -462,9 +464,17 @@ class BrushSession:
                     # its face normal) so it renders with a red X until release.
                     self.pending_erase_cells.append((target_cell, hover_normal))
                     set_pending_erase(self.pending_erase_cells)
+                    for m in mirrored_cells_for_axes(entry.grid, target_cell, axes):
+                        self.stroke.record(entry.grid, m, cell)
+                        self.pending_erase_cells.append((m, hover_normal))
+                    set_pending_erase(self.pending_erase_cells)
                 else:
                     if isinstance(entry.grid, TaggedVoxelGrid):
                         apply_brush_value(entry.grid, target_cell, 'ADD_SURFACE' if self.mode == 'PLACE' else self.mode, cell.index, domain=cell.domain)
+                        for m in mirrored_cells_for_axes(entry.grid, target_cell, axes):
+                            self.stroke.record(entry.grid, m, cell)
+                            apply_brush_value(entry.grid, m, 'ADD_SURFACE' if self.mode == 'PLACE' else self.mode, cell.index, domain=cell.domain)
+                            entry.dirty_bricks.add(split_coord(m, entry.grid.brick_size)[0])
                     else:
                         entry.grid.set(target_cell, cell.index)
                     entry.dirty_bricks.add(split_coord(target_cell, entry.grid.brick_size)[0])
@@ -487,6 +497,7 @@ class BrushSession:
                 clear_hover_state()
             if target_cell is not None:
                 cell = brush_cell_for_scene(context.scene, self.mode)
+                axes = live_mirror_axes(context.scene)
                 new_targets: List[VoxelCoord] = []
                 if self.last_target is not None and self.last_target != target_cell:
                     new_targets = [c for c in line_3d(self.last_target, target_cell) if entry.grid.in_extent(c)]
@@ -498,27 +509,29 @@ class BrushSession:
                         self.stroke.record(entry.grid, c, cell)
                         if c not in {pc for pc, _n in self.pending_erase_cells}:
                             self.pending_erase_cells.append((c, hover_normal or (0, 0, 1)))
+                        for m in mirrored_cells_for_axes(entry.grid, c, axes):
+                            if m not in {pc for pc, _n in self.pending_erase_cells}:
+                                self.stroke.record(entry.grid, m, cell)
+                                self.pending_erase_cells.append((m, hover_normal or (0, 0, 1)))
                     if new_targets:
                         set_pending_erase(self.pending_erase_cells)
                         self.last_target = target_cell
                         tag_redraw_all_viewports()
                     return {'RUNNING_MODAL'}
+                mirror_write_targets = []
                 if self.last_target is not None and self.last_target != target_cell:
-                    for c in new_targets:
-                        self.stroke.record(entry.grid, c, cell)
-                        if isinstance(entry.grid, TaggedVoxelGrid):
-                            apply_brush_value(entry.grid, c, 'ADD_SURFACE' if self.mode == 'PLACE' else self.mode, cell.index, domain=cell.domain)
-                        else:
-                            entry.grid.set(c, cell.index)
-                        entry.dirty_bricks.add(split_coord(c, entry.grid.brick_size)[0])
-                    update_volume_gpu_preview(entry, dirty_only=True)
-                    self.last_target = target_cell
-                    tag_redraw_all_viewports()
+                    mirror_write_targets = new_targets
                 elif self.last_target is None and new_targets:
-                    for c in new_targets:
+                    mirror_write_targets = new_targets
+                if mirror_write_targets:
+                    for c in mirror_write_targets:
                         self.stroke.record(entry.grid, c, cell)
                         if isinstance(entry.grid, TaggedVoxelGrid):
                             apply_brush_value(entry.grid, c, 'ADD_SURFACE' if self.mode == 'PLACE' else self.mode, cell.index, domain=cell.domain)
+                            for m in mirrored_cells_for_axes(entry.grid, c, axes):
+                                self.stroke.record(entry.grid, m, cell)
+                                apply_brush_value(entry.grid, m, 'ADD_SURFACE' if self.mode == 'PLACE' else self.mode, cell.index, domain=cell.domain)
+                                entry.dirty_bricks.add(split_coord(m, entry.grid.brick_size)[0])
                         else:
                             entry.grid.set(c, cell.index)
                         entry.dirty_bricks.add(split_coord(c, entry.grid.brick_size)[0])

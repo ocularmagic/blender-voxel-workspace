@@ -3,7 +3,7 @@
 Voxel Workspace is a Blender add-on for creating and editing bounded voxel
 models with separate Surface and Volume voxel types.
 
-Current release: **0.11.0**
+Current release: **0.14.0**
 
 ## What you can do
 
@@ -13,6 +13,8 @@ Current release: **0.11.0**
 - Add, erase, and repaint voxels with Blender undo support.
 - Import GLB and glTF models and convert them into voxel fields.
 - Fill enclosed interiors while preserving the visible surface shell.
+- Mirror edits across an axis: live stroke symmetry, or one-shot half-volume
+  copies with an optional paint-only recolor mode.
 - Show voxel boundaries in final camera renders.
 - Export exact visible Surface voxel geometry as a vertex-color OBJ.
 
@@ -52,6 +54,27 @@ selected from the Asset Shelf.
 
 Imported colors are sampled and reduced to the selected palette size. Larger
 palette sizes preserve more color variation.
+
+## Mirroring
+
+The **Mirror** box at the bottom of the Voxel Palette panel has two tools.
+
+**Active Mirror** repeats brush strokes symmetrically while you paint. Check
+one or more axes (X, Y, Z); every voxel you add, erase, or repaint is also
+applied at its mirrored position. Combined axes give multi-way symmetry.
+
+**Instant Mirror** copies one half of the volume onto the other in one click:
+
+1. Pick the axis with the X / Y / Z radio buttons.
+2. Optionally enable **Paint Only** to recolor existing voxels without adding
+   or removing any geometry (same-type voxels only; cross-domain and empty
+   cells are left untouched).
+3. Click **+ -> -** to copy the positive half onto the negative side, or
+   **- -> +** for the reverse.
+
+Without Paint Only, the copy is exact: target voxels whose source partner is
+empty are removed, and source voxels overwrite whatever the target had. Each
+mirror is a single undo step.
 
 ## Rendered voxel lines
 

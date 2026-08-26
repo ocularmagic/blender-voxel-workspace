@@ -294,6 +294,32 @@ def draw_typed_palette(
             all_entries,
         )
 
+    # Mirror tools in one separated space at the bottom of the panel:
+    # Active Mirror (live brush symmetry) + Instant Mirror (one-shot copy).
+    scene_props = getattr(context.scene, "voxel_workspace", None)
+    if scene_props is not None:
+        mirror_box = layout.box()
+        mirror_box.label(text="Mirror", icon='MOD_MIRROR')
+
+        active_col = mirror_box.column(align=True)
+        active_col.label(text="Active Mirror:")
+        axis_row = active_col.row(align=True)
+        axis_row.label(text="Axes:")
+        axis_row.prop(scene_props, "mirror_live_x", toggle=True)
+        axis_row.prop(scene_props, "mirror_live_y", toggle=True)
+        axis_row.prop(scene_props, "mirror_live_z", toggle=True)
+
+        instant_col = mirror_box.column(align=True)
+        instant_col.separator()
+        instant_col.label(text="Instant Mirror:")
+        instant_col.prop(scene_props, "mirror_axis", expand=True)
+        instant_col.prop(scene_props, "mirror_paint_only")
+        btn_row = instant_col.row(align=True)
+        op = btn_row.operator("voxel.mirror", text="+ -> -")
+        op.direction = "POS_TO_NEG"
+        op = btn_row.operator("voxel.mirror", text="- -> +")
+        op.direction = "NEG_TO_POS"
+
 
 # ---------------------------------------------------------------------------
 # Workspace helpers and left palette panel

@@ -277,6 +277,39 @@ class VoxelObjectProperties(PropertyGroup):
 class VoxelSceneProperties(PropertyGroup):
     """Scene-level voxel interaction properties."""
     if bpy is not None:
+        mirror_live_x: BoolProperty(
+            name="X",
+            description="Mirror brush strokes across the YZ center plane while editing",
+            default=False,
+        )
+        mirror_live_y: BoolProperty(
+            name="Y",
+            description="Mirror brush strokes across the XZ center plane while editing",
+            default=False,
+        )
+        mirror_live_z: BoolProperty(
+            name="Z",
+            description="Mirror brush strokes across the XY center plane while editing",
+            default=False,
+        )
+        mirror_axis: EnumProperty(
+            name="Axis",
+            description="Axis plane the instant mirror copies across",
+            items=[
+                ("X", "X", "Mirror across the YZ center plane"),
+                ("Y", "Y", "Mirror across the XZ center plane"),
+                ("Z", "Z", "Mirror across the XY center plane"),
+            ],
+            default="X",
+        )
+        mirror_paint_only: BoolProperty(
+            name="Paint Only",
+            description=(
+                "Only recolor existing target voxels of the same type; "
+                "no voxels are added or removed"
+            ),
+            default=False,
+        )
         create_size_x: IntProperty(
             name="Size X",
             description="Default X dimension in voxels for new volumes",
