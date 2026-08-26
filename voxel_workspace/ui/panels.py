@@ -313,15 +313,15 @@ def draw_typed_palette(
         op.palette_type = pal_tab
         op.index = idx
 
-    # Active material preview sits flush under the last chip row.
+    # Active material preview sits flush under the last chip row. Keep the
+    # native widget used by Blender's Material Properties tab so the preview
+    # matches its rendered material ball exactly. A custom template_icon may
+    # be large, but it is still only an approximation of the node graph.
     active_entry = next((e for e in target_palette if e.index == active_index), None)
     if active_entry is not None:
         material = getattr(active_entry, "material", None)
         if material is not None:
             try:
-                # Match Blender's Material Properties panel exactly. Do not
-                # force a preview render here; Blender owns this widget's
-                # refresh and interaction state.
                 layout.template_preview(material)
             except Exception:
                 pass

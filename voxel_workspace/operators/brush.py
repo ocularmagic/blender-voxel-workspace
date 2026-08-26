@@ -48,6 +48,22 @@ from ..geometry.visible_faces import mesh_visible_faces
 _BRUSH_MODAL_GENERATION = 0
 
 
+def _set_brush_cursor_default(context: Any) -> None:
+    """Restore the viewport cursor after UI dividers/shelves activate a brush.
+
+    The persistent brush consumes viewport mouse-move events. Without taking
+    cursor ownership, Blender may never run the normal region cursor update
+    that clears a resize cursor inherited from the N-panel or Asset Shelf.
+    """
+    window = getattr(context, "window", None)
+    if window is None:
+        return
+    try:
+        window.cursor_set('DEFAULT')
+    except Exception:
+        pass
+
+
 def begin_brush_modal_session() -> int:
     """Invalidate older brush handlers and return a token for the new modal."""
     global _BRUSH_MODAL_GENERATION
@@ -745,13 +761,28 @@ class VOXEL_OT_brush(Operator):
         )
         context.scene.voxel_workspace.active_tool = self.mode
         context.window_manager.modal_handler_add(self)
+        _set_brush_cursor_default(context)
         tag_redraw_all_viewports()
         return {'RUNNING_MODAL'}
 
     def modal(self, context: Any, event: Any) -> set:
         if getattr(self, "session", None) is None:
+            _set_brush_cursor_default(context)
             return {'CANCELLED'}
-        return self.session.handle_event(context, event)
+        # Region divider and Asset Shelf activation can leave Blender's
+        # horizontal resize cursor active. Because this persistent modal owns
+        # viewport mouse moves, explicitly restore the normal cursor whenever
+        # the pointer is back over the 3D WINDOW; UI regions keep ownership of
+        # their own cursors through PASS_THROUGH.
+        if (
+            event.type in {'MOUSEMOVE', 'INBETWEEN_MOUSEMOVE'}
+            and not is_event_over_ui_region(context, event)
+        ):
+            _set_brush_cursor_default(context)
+        result = self.session.handle_event(context, event)
+        if result in ({'FINISHED'}, {'CANCELLED'}):
+            _set_brush_cursor_default(context)
+        return result
 
 
 BRUSH_OPERATOR_CLASSES = [
