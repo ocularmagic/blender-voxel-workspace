@@ -84,6 +84,35 @@ silently deletes them. An empty root can be reduced to one voxel per axis;
 when voxels are present, the root cannot be reduced past the occupied voxel
 bounds. Growth is limited to 512 voxels per axis.
 
+## Stretching and squashing the interior
+
+Where **Adjust voxel root size** adds or removes *empty* space, **Stretch /
+squash interior voxels** scales the voxels themselves together with the root,
+so a shape gets taller, wider, or flatter instead of gaining room around it:
+
+1. Open the **Voxel** tab in the 3D Viewport’s right-side N-panel.
+2. Click **Stretch / squash interior voxels** — its own section directly below
+   the Resize Volume box.
+3. Drag one of the colored axis arrows at a root corner:
+   - **Red** arrows scale along X.
+   - **Green** arrows scale along Y.
+   - **Blue** arrows scale along Z.
+4. Continue dragging any arrow for additional one-axis changes.
+5. Click **Accept** to keep all changes, or click **Cancel** to restore the
+   volume exactly as it was before this scaling session began. **Esc**
+   cancels as well.
+
+Stretching fills solidly: any run of voxels along the dragged axis expands
+into the full space between its endpoints, so shapes stay contiguous instead
+of turning into dotted outlines — even an isolated voxel grows into a short
+column of voxels. Squashing compacts overlapping voxels into single cells and
+never deletes content. Like adjustment mode, scaling blocks brush editing
+until accepted or cancelled, and each released drag is its own undo step.
+
+**Boundary protection:** while scaling is active or not, an add brush never
+overwrites voxels at the root's edge. If the root is full to a side, drawing
+against that side does nothing instead of replacing the outermost voxels.
+
 ## Importing a model
 
 1. Create or select a voxel field.

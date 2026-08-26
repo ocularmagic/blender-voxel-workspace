@@ -8,6 +8,7 @@ from .resize_volume import (
     RESIZE_OPERATOR_CLASSES,
 )
 from .adjust_voxel_root import VOXEL_OT_adjust_voxel_root, ADJUST_OPERATOR_CLASSES
+from .scale_voxels import SCALE_OPERATOR_CLASSES
 from .edit_session import (
     VOXEL_OT_start_surface,
     VOXEL_OT_start_volume,
@@ -65,6 +66,7 @@ OPERATOR_CLASSES: List[Type] = [
     VOXEL_OT_create_volume,
     *RESIZE_OPERATOR_CLASSES,
     *ADJUST_OPERATOR_CLASSES,
+    *SCALE_OPERATOR_CLASSES,
     *EDIT_SESSION_OPERATOR_CLASSES,
     *BRUSH_OPERATOR_CLASSES,
     *PALETTE_OPERATOR_CLASSES,

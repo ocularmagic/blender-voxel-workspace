@@ -21,6 +21,7 @@ from ..operators.palette import (
     get_palette_selection,
 )
 from ..operators.adjust_voxel_root import is_adjustment_active
+from ..operators.scale_voxels import is_scaling_active
 from .palette_icons import generate_swatch_icon_id
 from ..blender.material_domains import get_palette, display_rgba_from_entry
 
@@ -444,6 +445,26 @@ def _draw_volume_settings(layout: Any, context: Any) -> None:
             cancel_row = action_row.row(align=True)
             cancel_row.alert = True
             cancel_row.operator("voxel.cancel_adjust_voxel_root", text="Cancel", icon="CANCEL")
+
+        # Stretch/Squash section: rescales the voxels inside the root.
+        # Sits below the Resize Volume box, as its own section (not nested).
+        scale_box = vol_box.box()
+        scale_box.label(text="Stretch / Squash Interior", icon="FULLSCREEN_ENTER")
+        scale_box.label(text="Drag an arrow to scale one axis. Voxels stretch (filled) or squash with it.", icon="INFO")
+        scaling = is_scaling_active()
+        scale_box.operator("voxel.scale_voxels", text="Stretch / squash interior voxels", icon="MOD_SMOOTH")
+        if scaling:
+            s_action_row = scale_box.row(align=True)
+            s_action_row.scale_y = 1.25
+            s_action_row.operator(
+                "voxel.accept_scale_voxels",
+                text="Accept",
+                icon="CHECKMARK",
+                depress=True,
+            )
+            s_cancel_row = s_action_row.row(align=True)
+            s_cancel_row.alert = True
+            s_cancel_row.operator("voxel.cancel_scale_voxels", text="Cancel", icon="CANCEL")
 
         export_row = vol_box.row()
         export_row.scale_y = 1.2

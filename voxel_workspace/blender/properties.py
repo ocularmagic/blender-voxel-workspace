@@ -478,6 +478,7 @@ class VoxelSceneProperties(PropertyGroup):
                 ("ERASE", "Erase", "Erase brush is active"),
                 ("PLACE", "Legacy Place", "Compatibility alias for Add Surface"),
                 ("ADJUST", "Adjust Voxel Root", "Voxel root adjustment is active"),
+                ("SCALE", "Stretch/Squash Interior", "Interior voxel scaling is active"),
             ],
             default="NONE",
         )

@@ -117,7 +117,12 @@ def compute_brush_target(
                 hit.cell[2] + hit.normal[2],
             )
             if not grid.in_extent(target):
-                target = clamp_to_extent(grid, target)
+                # Growth past the volume edge is refused outright. The
+                # neighbour cell does not exist; clamping the coordinate back
+                # would silently OVERWRITE the boundary voxel (reported bug:
+                # painting at a full-to-the-edge root replaced its outer
+                # voxels). Adding nothing is the correct behaviour.
+                return None, None, None
             contact_normal = tuple(-component for component in hit.normal)
             return target, target, contact_normal
         elif is_erase or is_repaint:
