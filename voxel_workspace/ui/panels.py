@@ -57,24 +57,63 @@ def _draw_node_inputs(layout: Any, node: Any) -> None:
 
 
 def _draw_material_socket_widget(layout: Any, material: Any, pal_tab: str) -> None:
-    """Draw the same Surface/Volume socket UI as the Material properties tab."""
+    """Draw the Surface/Volume socket UI, whitelisted sockets expanded.
+
+    Base Color (resolving through the render-only edge-mix node when linked),
+    Metallic, Roughness, IOR, and Alpha are drawn as always-expanded rows.
+    Everything else in the shader stays collapsed/hidden so the panel reads
+    at a glance.
+    """
     tree = getattr(material, "node_tree", None)
     if tree is None:
         return
     layout.use_property_split = True
     if str(pal_tab).upper() == "VOLUME":
+        # Volume palette keeps its flat full socket list; Color is the main
+        # adjustment users make there.
         _draw_node_inputs(layout, _principled_volume_node(tree))
         return
-    try:
-        from bl_ui.properties_material import panel_node_draw
-        panel_node_draw(layout, tree, "OUTPUT_MATERIAL", "Surface")
-        return
-    except Exception:
-        pass
     bsdf = tree.nodes.get("Principled BSDF")
     if bsdf is None:
         bsdf = next((node for node in tree.nodes if getattr(node, "bl_idname", "") == "ShaderNodeBsdfPrincipled"), None)
-    _draw_node_inputs(layout, bsdf)
+    if bsdf is None:
+        return
+
+    def _draw_flat(socket_name: str, text: str = None) -> None:
+        try:
+            socket = bsdf.inputs[socket_name]
+            if getattr(socket, "is_linked", False):
+                row = layout.row(align=True)
+                row.enabled = False
+                row.prop(socket, "default_value", text=text or socket_name)
+                return
+            row = layout.row(align=True)
+            row.prop(socket, "default_value", text=text or socket.name)
+        except Exception:
+            pass
+
+    # Owned Surface materials route the visible color through the
+    # 'VoxelSurfaceEdgeMix' render-only overlay; the true palette color
+    # lives in that node's Color1 (input index 1).
+    bc_socket = None
+    try:
+        bc_input = bsdf.inputs["Base Color"]
+        if bc_input.is_linked:
+            link = next(iter(bc_input.links), None)
+            src_node = getattr(getattr(link, "from_socket", None), "node", None)
+            if src_node is not None and getattr(src_node, "name", "") == "VoxelSurfaceEdgeMix":
+                bc_socket = src_node.inputs[1]
+        if bc_socket is None:
+            bc_socket = bc_input
+        bc_row = layout.row(align=True)
+        bc_row.prop(bc_socket, "default_value", text="Base Color")
+    except Exception:
+        pass
+
+    _draw_flat("Metallic")
+    _draw_flat("Roughness")
+    _draw_flat("IOR")
+    _draw_flat("Alpha")
 
 
 def _draw_palette_entry_editor(
@@ -531,7 +570,49 @@ class VOXEL_PT_workspace_settings(Panel):
         _draw_volume_settings(self.layout, context)
 
 
+def _draw_brush_shapes_settings(layout: Any, context: Any) -> None:
+    """Brushes/Shapes tab: brush footprint shape and size for add/erase."""
+    if context is None or bpy is None:
+        return
+    scene = getattr(context, "scene", None)
+    props = getattr(scene, "voxel_workspace", None)
+    if props is None:
+        layout.label(text="No voxel scene properties", icon='ERROR')
+        return
+
+    box = layout.box()
+    box.label(text="Brush Footprint", icon='BRUSHES_ALL')
+    row = box.row(align=True)
+    row.prop(props, "brush_shape", expand=True)
+    col = box.column(align=True)
+    col.prop(props, "brush_diameter", text="Size (voxels)")
+    active_tool = str(getattr(props, "active_tool", "NONE")).upper()
+    if active_tool in {"ADD_SURFACE", "ADD_VOLUME", "ERASE", "PLACE"}:
+        from ..core.brush_shapes import radius_from_diameter
+        d = int(props.brush_diameter)
+        if d <= 1:
+            hint = "Single voxel"
+        else:
+            width = 2 * radius_from_diameter(d) - 1
+            kind = "cube" if str(props.brush_shape).upper() == "CUBE" else "sphere"
+            hint = f"{width}×{width}×{width} {kind} footprint"
+        col.label(text=hint, icon='INFO')
+
+
+class VOXEL_PT_brush_shapes_panel(Panel):
+    """Brushes/Shapes N-panel tab."""
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'Brushes/Shapes'
+    bl_label = 'Brushes / Shapes'
+    bl_order = 5
+
+    def draw(self, context: Any) -> None:
+        _draw_brush_shapes_settings(self.layout, context)
+
+
 PANEL_CLASSES = [
     VOXEL_PT_main_panel,
     VOXEL_PT_palette_panel,
+    VOXEL_PT_brush_shapes_panel,
 ]

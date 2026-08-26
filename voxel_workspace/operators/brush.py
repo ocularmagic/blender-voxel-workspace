@@ -15,6 +15,7 @@ except ImportError:
 from ..constants import VoxelCoord
 from ..core.coords import split_coord
 from ..core.commands import VoxelStroke, apply_brush_value
+from ..core.brush_shapes import normalize_shape, radius_from_diameter, stamp_cells
 from ..core.tagged_grid import TaggedVoxelGrid, VoxelCell, VoxelDomain, CELL_EMPTY
 from .mirror import live_mirror_axes, mirrored_cells_for_axes
 from ..core.line import (
@@ -33,6 +34,8 @@ from ..blender.gpu_preview import (
     clear_hover_state,
     set_pending_erase,
     clear_pending_erase,
+    set_ghost_state,
+    clear_ghost_state,
     refresh_material_display_colors,
     update_volume_gpu_preview,
     stop_editing,
@@ -177,6 +180,22 @@ def is_valid_voxel_object(obj_or_context: Any) -> bool:
     )
 
 
+def brush_radius_for_scene(scene: Any) -> int:
+    """Resolve the stamp radius for the scene's brush shape/size settings."""
+    props = getattr(scene, "voxel_workspace", None)
+    if props is None:
+        return 1
+    return radius_from_diameter(int(getattr(props, "brush_diameter", 1)))
+
+
+def brush_shape_for_scene(scene: Any) -> str:
+    """Resolve the normalized stamp shape for the scene's brush settings."""
+    props = getattr(scene, "voxel_workspace", None)
+    if props is None:
+        return "SPHERE"
+    return normalize_shape(str(getattr(props, "brush_shape", "SPHERE")))
+
+
 class BrushSession:
     """Core state machine and raycast/stroke engine for modal voxel painting/erasing."""
 
@@ -298,6 +317,104 @@ class BrushSession:
         self.pending_erase_cells = []
         clear_pending_erase()
         clear_hover_state()
+        clear_ghost_state()
+
+    def stamp_footprint(self, entry: Any, center: VoxelCoord) -> List[VoxelCoord]:
+        """Expand the brush footprint around ``center``, clipped to extent."""
+        scene = bpy.context.scene if bpy is not None else None
+        radius = brush_radius_for_scene(scene)
+        if radius <= 1:
+            return [tuple(center)]
+        shape = brush_shape_for_scene(scene)
+        return stamp_cells(entry.grid, tuple(center), shape, radius)
+
+    def apply_stamp(
+        self,
+        entry: Any,
+        center: VoxelCoord,
+        cell: VoxelCell,
+        hover_normal: Optional[VoxelCoord],
+        commit: bool,
+    ) -> List[Tuple[VoxelCoord, VoxelCoord]]:
+        """Stamp the full brush footprint for one anchor touch.
+
+        ``commit`` False = deferred erase (record + red X marks only; the grid
+        mutates on release). Add mode writes ONLY empty overlapping cells
+        ("fill everything empty", v0.19.0 decision), so existing voxels and
+        the 0.18.0 boundary-refusal guarantee hold per stamped cell. Erase
+        always removes the full solid overlap. Returns new pending-erase
+        cells for this touch.
+
+        ``cell`` is only meaningful in deferred-erase / record paths (it is
+        the value the stroke records); committed grid writes resolve their
+        own canonical value via apply_brush_value.
+        """
+        grid = entry.grid
+        is_tagged = isinstance(grid, TaggedVoxelGrid)
+        normalized_mode = 'ADD_SURFACE' if self.mode in ('PLACE', 'ADD_SURFACE') else self.mode
+        scene = bpy.context.scene if bpy is not None else None
+        axes = live_mirror_axes(scene) if scene is not None else {}
+        center = tuple(center)
+        seen = set()
+        added_erase_marks: List[Tuple[VoxelCoord, VoxelCoord]] = []
+
+        for target in self.stamp_footprint(entry, center):
+            if target in seen:
+                continue
+            candidates = [target]
+            if is_tagged:
+                candidates.extend(mirrored_cells_for_axes(grid, target, axes))
+            for write_coord in candidates:
+                if write_coord in seen or not grid.in_extent(write_coord):
+                    continue
+                seen.add(write_coord)
+                if self.mode == 'ERASE':
+                    existing_empty = (
+                        is_tagged and grid.get_cell(write_coord) == CELL_EMPTY
+                    )
+                    if commit:
+                        if existing_empty:
+                            continue
+                        if is_tagged:
+                            apply_brush_value(grid, write_coord, 'ERASE', 0)
+                        else:
+                            grid.set(write_coord, 0)
+                    else:
+                        if not existing_empty:
+                            self.stroke.record(grid, write_coord, CELL_EMPTY)
+                            mark = (write_coord, hover_normal or (0, 0, 1))
+                            self.pending_erase_cells.append(mark)
+                            added_erase_marks.append(mark)
+                    entry.dirty_bricks.add(split_coord(write_coord, grid.brick_size)[0])
+                elif self.mode in ('PLACE', 'ADD_SURFACE', 'ADD_VOLUME'):
+                    # Fill everything empty: never overwrite an existing voxel.
+                    if is_tagged:
+                        if grid.get_cell(write_coord) != CELL_EMPTY:
+                            continue
+                    else:
+                        current = grid.get(write_coord)
+                        if current:
+                            continue
+                    if commit:
+                        if is_tagged:
+                            self.stroke.record(grid, write_coord, cell)
+                            apply_brush_value(grid, write_coord, normalized_mode, cell.index, domain=cell.domain)
+                        else:
+                            self.stroke.record(grid, write_coord, cell.index)
+                            grid.set(write_coord, cell.index)
+                        entry.dirty_bricks.add(split_coord(write_coord, grid.brick_size)[0])
+                else:
+                    # REPAINT stays single-cell: recolors the anchor voxel only.
+                    if write_coord != center:
+                        continue
+                    self.stroke.record(grid, write_coord, cell if is_tagged else cell.index)
+                    if is_tagged:
+                        apply_brush_value(grid, write_coord, normalized_mode, cell.index, domain=cell.domain)
+                    else:
+                        grid.set(write_coord, cell.index)
+                    entry.dirty_bricks.add(split_coord(write_coord, grid.brick_size)[0])
+        return added_erase_marks
+
 
     def handle_event(self, context: Any, event: Any) -> set:
         """Process a window/viewport event according to modal stroke rules."""
@@ -365,6 +482,7 @@ class BrushSession:
         if (event.ctrl or getattr(event, "oskey", False)) and event.type in {'Z', 'Y'}:
             clear_hover_state()
             clear_pending_erase()
+            clear_ghost_state()
             self.pending_erase_cells = []
             if self.is_dragging and self.stroke is not None:
                 self.stroke = None
@@ -442,6 +560,24 @@ class BrushSession:
         # Calculate target for current mouse position
         target_cell, hover_cell, hover_normal = self.get_brush_target(context, event, entry, transform_obj)
 
+        # Ghost footprint preview: follows the anchor cell whenever the brush
+        # shape is larger than a single voxel. Erase tints red; add uses the
+        # active palette color at low alpha.
+        if target_cell is not None and brush_radius_for_scene(context.scene) > 1:
+            ghost_color = brush_display_color_for_scene(context.scene, v_ctx.mesh, self.mode)
+            if self.mode != 'ERASE':
+                ghost_color = (ghost_color[0], ghost_color[1], ghost_color[2], 0.28)
+            else:
+                ghost_color = (1.0, 0.25, 0.25, 0.30)
+            set_ghost_state(
+                tuple(target_cell),
+                brush_shape_for_scene(context.scene),
+                brush_radius_for_scene(context.scene),
+                ghost_color,
+            )
+        else:
+            clear_ghost_state()
+
         # 4. Handle LMB Press (Start Stroke)
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             # Ensure target region is VIEW_3D WINDOW
@@ -456,28 +592,15 @@ class BrushSession:
             # deleting voxels behind it all the way through the model.
             self.pick_grid = snapshot_grid(entry.grid)
             cell = brush_cell_for_scene(context.scene, self.mode)
-            axes = live_mirror_axes(context.scene)
             if target_cell is not None:
-                self.stroke.record(entry.grid, target_cell, cell)
                 if self.mode == 'ERASE':
-                    # Deferred erase: keep the voxel in the grid (marked with
-                    # its face normal) so it renders with a red X until release.
-                    self.pending_erase_cells.append((target_cell, hover_normal))
+                    # Deferred erase: voxels stay in the grid (marked with a
+                    # face normal) so they render with a red X until release.
+                    self.apply_stamp(entry, target_cell, cell, hover_normal, commit=False)
                     set_pending_erase(self.pending_erase_cells)
-                    for m in mirrored_cells_for_axes(entry.grid, target_cell, axes):
-                        self.stroke.record(entry.grid, m, cell)
-                        self.pending_erase_cells.append((m, hover_normal))
-                    set_pending_erase(self.pending_erase_cells)
+                    update_volume_gpu_preview(entry, dirty_only=True)
                 else:
-                    if isinstance(entry.grid, TaggedVoxelGrid):
-                        apply_brush_value(entry.grid, target_cell, 'ADD_SURFACE' if self.mode == 'PLACE' else self.mode, cell.index, domain=cell.domain)
-                        for m in mirrored_cells_for_axes(entry.grid, target_cell, axes):
-                            self.stroke.record(entry.grid, m, cell)
-                            apply_brush_value(entry.grid, m, 'ADD_SURFACE' if self.mode == 'PLACE' else self.mode, cell.index, domain=cell.domain)
-                            entry.dirty_bricks.add(split_coord(m, entry.grid.brick_size)[0])
-                    else:
-                        entry.grid.set(target_cell, cell.index)
-                    entry.dirty_bricks.add(split_coord(target_cell, entry.grid.brick_size)[0])
+                    self.apply_stamp(entry, target_cell, cell, hover_normal, commit=True)
                     update_volume_gpu_preview(entry, dirty_only=True)
                 self.last_target = target_cell
             else:
@@ -500,41 +623,25 @@ class BrushSession:
                 axes = live_mirror_axes(context.scene)
                 new_targets: List[VoxelCoord] = []
                 if self.last_target is not None and self.last_target != target_cell:
+                    # Interpolate the drag so fast mousemoves do not skip
+                    # stamps; each interpolated anchor gets its own footprint.
                     new_targets = [c for c in line_3d(self.last_target, target_cell) if entry.grid.in_extent(c)]
                 elif self.last_target is None:
                     new_targets = [target_cell]
+                touched_any = False
+                for c in new_targets:
+                    added = self.apply_stamp(entry, c, cell, hover_normal, commit=(self.mode != 'ERASE'))
+                    if added or c == target_cell:
+                        touched_any = True
                 if self.mode == 'ERASE':
                     # Deferred erase: only record + mark; no grid mutation yet.
-                    for c in new_targets:
-                        self.stroke.record(entry.grid, c, cell)
-                        if c not in {pc for pc, _n in self.pending_erase_cells}:
-                            self.pending_erase_cells.append((c, hover_normal or (0, 0, 1)))
-                        for m in mirrored_cells_for_axes(entry.grid, c, axes):
-                            if m not in {pc for pc, _n in self.pending_erase_cells}:
-                                self.stroke.record(entry.grid, m, cell)
-                                self.pending_erase_cells.append((m, hover_normal or (0, 0, 1)))
-                    if new_targets:
+                    if touched_any:
                         set_pending_erase(self.pending_erase_cells)
+                        update_volume_gpu_preview(entry, dirty_only=True)
                         self.last_target = target_cell
                         tag_redraw_all_viewports()
                     return {'RUNNING_MODAL'}
-                mirror_write_targets = []
-                if self.last_target is not None and self.last_target != target_cell:
-                    mirror_write_targets = new_targets
-                elif self.last_target is None and new_targets:
-                    mirror_write_targets = new_targets
-                if mirror_write_targets:
-                    for c in mirror_write_targets:
-                        self.stroke.record(entry.grid, c, cell)
-                        if isinstance(entry.grid, TaggedVoxelGrid):
-                            apply_brush_value(entry.grid, c, 'ADD_SURFACE' if self.mode == 'PLACE' else self.mode, cell.index, domain=cell.domain)
-                            for m in mirrored_cells_for_axes(entry.grid, c, axes):
-                                self.stroke.record(entry.grid, m, cell)
-                                apply_brush_value(entry.grid, m, 'ADD_SURFACE' if self.mode == 'PLACE' else self.mode, cell.index, domain=cell.domain)
-                                entry.dirty_bricks.add(split_coord(m, entry.grid.brick_size)[0])
-                        else:
-                            entry.grid.set(c, cell.index)
-                        entry.dirty_bricks.add(split_coord(c, entry.grid.brick_size)[0])
+                if touched_any:
                     update_volume_gpu_preview(entry, dirty_only=True)
                     self.last_target = target_cell
                     tag_redraw_all_viewports()

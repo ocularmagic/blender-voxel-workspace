@@ -681,7 +681,187 @@ def build_hover_face_gpu_batch(
     return batch_for_shader(shader, 'TRIS', {'pos': verts}, indices=tris)
 
 
-# --- Runtime State & Caching ---
+# --- Brush ghost footprint preview (v0.19.0) ---
+
+_GHOST_STATE: Optional[Dict[str, Any]] = None
+
+
+def _ghost_outline_color(entry: Any, cells: Sequence[Tuple[int, int, int]]) -> Tuple[float, float, float, float]:
+    """Pick a ghost outline color that contrasts with what's UNDER the brush.
+
+    Samples the palette display colors of occupied voxels inside the
+    footprint; falls back to the brush tint itself when the footprint sits in
+    bare space. Same light-on-dark / dark-on-light rule as auto-contrast voxel
+    edges, so near-black voxels never swallow a dark outline.
+    """
+    sampled_lums = []
+    try:
+        grid = entry.grid if entry is not None else None
+        if grid is not None and hasattr(grid, "get_cell"):
+            from ..core.tagged_grid import CELL_EMPTY
+            from .material_domains import display_rgba_from_entry
+            seen_palette_types = set()
+            for c in cells:
+                cell = grid.get_cell(tuple(c))
+                if cell is None or cell == CELL_EMPTY:
+                    continue
+                pal_type = "VOLUME" if getattr(cell.domain, "name", "") == "VOLUME" else "SURFACE"
+                if (pal_type, cell.index) in seen_palette_types:
+                    continue
+                seen_palette_types.add((pal_type, cell.index))
+                rgba = display_rgba_from_entry(
+                    _find_entry_by_index_local(entry, pal_type, cell.index), pal_type
+                )
+                r, g, b = float(rgba[0]), float(rgba[1]), float(rgba[2])
+                sampled_lums.append(0.2126 * r + 0.7152 * g + 0.0722 * b)
+    except Exception:
+        sampled_lums = []
+    if sampled_lums:
+        under_lum = sum(sampled_lums) / len(sampled_lums)
+    else:
+        # Bare space: contrast against the brush fill color.
+        state = _GHOST_STATE or {}
+        g_color = tuple(state.get("color", (1.0, 1.0, 1.0, 0.35)))
+        under_lum = 0.2126 * g_color[0] + 0.7152 * g_color[1] + 0.0722 * g_color[2]
+    return (0.02, 0.02, 0.04, 0.85) if under_lum > 0.5 else (0.95, 0.97, 1.0, 0.85)
+
+
+def _find_entry_by_index_local(mesh: Any, palette_type: str, index: int) -> Any:
+    try:
+        from .material_domains import find_entry
+        return find_entry(mesh, palette_type, index)
+    except Exception:
+        return None
+
+
+def set_ghost_state(
+    coord: Tuple[int, int, int],
+    shape: str,
+    radius: int,
+    color: Tuple[float, float, float, float],
+) -> None:
+    """Show a translucent ghost of the brush footprint anchored at ``coord``."""
+    global _GHOST_STATE
+    _GHOST_STATE = {
+        "coord": tuple(int(c) for c in coord),
+        "shape": str(shape).upper(),
+        "radius": max(1, int(radius)),
+        "color": tuple(color),
+        "batch": None,
+    }
+
+
+def get_ghost_state() -> Optional[Dict[str, Any]]:
+    """Return the active brush-ghost state dictionary or None."""
+    return _GHOST_STATE
+
+
+def clear_ghost_state() -> None:
+    """Clear the brush-ghost preview."""
+    global _GHOST_STATE
+    _GHOST_STATE = None
+
+
+def build_ghost_shell_mesh_data(
+    cells: Sequence[Tuple[int, int, int]],
+    voxel_size: float,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Build one wireframe shell around the union of the given voxel cells.
+
+    Only edges of cell faces NOT shared with a neighbor cell are emitted, so
+    the ghost reads as the outline of the whole shape rather than a lattice.
+    Vertices are centered like every other grid mesh builder (cell [x,y,z]
+    spans [x,x+1]) and scaled by voxel_size. Translation is applied by
+    pushing a matrix in the draw pass so one cached shell serves any anchor.
+    """
+    if not cells:
+        return np.zeros((0, 3), dtype=np.float32), np.zeros((0, 2), dtype=np.int32)
+    local = set((int(c[0]), int(c[1]), int(c[2])) for c in cells)
+
+    # Enumerate boundary faces: a face exists where the neighbour along
+    # +/-axis is NOT in the cell set. Collect segments as ordered pairs in a
+    # set so shared edges between adjacent exposed faces appear only once.
+    segments = set()
+    for x, y, z in local:
+        for axis in range(3):
+            for s in (1, -1):
+                nb = [x, y, z]
+                nb[axis] += s
+                if tuple(nb) in local:
+                    continue
+                base = [x, y, z]
+                if s > 0:
+                    base[axis] += 1
+                a1, a2 = (d for d in range(3) if d != axis)
+                corners = []
+                for du, dv in ((0, 0), (1, 0), (1, 1), (0, 1)):
+                    p = list(base)
+                    p[a1] += du
+                    p[a2] += dv
+                    corners.append(tuple(p))
+                for i in range(4):
+                    a = corners[i]
+                    b = corners[(i + 1) % 4]
+                    segments.add((a, b) if a <= b else (b, a))
+
+    seen_verts = {}
+    verts_array = []
+    lines_array = []
+    for a, b in sorted(segments):
+        for corner in (a, b):
+            if corner not in seen_verts:
+                seen_verts[corner] = len(verts_array)
+                verts_array.append([float(corner[0]), float(corner[1]), float(corner[2])])
+        lines_array.append([seen_verts[a], seen_verts[b]])
+    verts = np.array(verts_array, dtype=np.float32) * voxel_size
+    lines = np.array(lines_array, dtype=np.int32) if lines_array else np.zeros((0, 2), dtype=np.int32)
+    return verts, lines
+
+
+def build_ghost_face_mesh_data(
+    cells: Sequence[Tuple[int, int, int]],
+    voxel_size: float,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Build triangle mesh data for every EXPOSED face of the footprint union.
+
+    Pairs with ``build_ghost_shell_mesh_data``: same face enumeration, but
+    emits quads (as two triangles) instead of perimeter lines. Vertices are
+    in grid-space cell units scaled by voxel_size; translation to the anchor
+    happens via gpu.matrix in the draw pass.
+    """
+    if not cells:
+        return np.zeros((0, 3), dtype=np.float32), np.zeros((0, 3), dtype=np.int32)
+    local = set((int(c[0]), int(c[1]), int(c[2])) for c in cells)
+
+    verts_list: List[List[float]] = []
+    tris_list: List[List[int]] = []
+    for x, y, z in local:
+        for axis in range(3):
+            for s in (1, -1):
+                nb = [x, y, z]
+                nb[axis] += s
+                if tuple(nb) in local:
+                    continue
+                base = [x, y, z]
+                if s > 0:
+                    base[axis] += 1
+                a1, a2 = (d for d in range(3) if d != axis)
+                corners = []
+                for du, dv in ((0, 0), (1, 0), (1, 1), (0, 1)):
+                    p = list(base)
+                    p[a1] += du
+                    p[a2] += dv
+                    corners.append(tuple(float(v) for v in p))
+                i0 = len(verts_list)
+                verts_list.extend(corners)
+                tris_list.append([i0, i0 + 1, i0 + 2])
+                tris_list.append([i0, i0 + 2, i0 + 3])
+    verts = np.array(verts_list, dtype=np.float32) * voxel_size if verts_list else np.zeros((0, 3), dtype=np.float32)
+    tris = np.array(tris_list, dtype=np.int32) if tris_list else np.zeros((0, 3), dtype=np.int32)
+    return verts, tris
+
+
+
 
 _HOVER_STATE: Optional[Dict[str, Any]] = None
 _PENDING_ERASE: List[Tuple[Tuple[int, int, int], Tuple[int, int, int]]] = []
@@ -1202,6 +1382,77 @@ def _draw_callback() -> None:
                         x_batch.draw(uniform_shader)
                         uniform_shader.uniform_float("color", (0.05, 0.05, 0.08, 1.0))
                         x_batch.draw(uniform_shader)
+                except Exception:
+                    pass
+
+            # 5d. Draw brush ghost footprint: a translucent tinted fill over
+            # the footprint's exposed faces plus a bright, depth-insensitive
+            # outline, so the ghost stays visible inside empty voxels and
+            # against same-colored surfaces (same contrast guarantees as the
+            # hover highlight).
+            if _GHOST_STATE is not None and _GHOST_STATE.get("coord") is not None:
+                try:
+                    g_coord = _GHOST_STATE["coord"]
+                    g_key = (_GHOST_STATE["shape"], _GHOST_STATE["radius"])
+                    # Rebuild EVERY frame in ABSOLUTE grid coordinates around
+                    # the current anchor. History (do not regress):
+                    #   - rebased mesh + translate(anchor): corner-on-anchor,
+                    #     off by +(R-1).
+                    #   - rebased mesh + translate(anchor - min_off): DOUBLE
+                    #     offset, wrong sign (the rebase already subtracted
+                    #     min_off; translating must add it BACK).
+                    #   - absolute cells + (shape, radius)-keyed cache: first
+                    #     frame baked into cache, ghost froze far away.
+                    # Absolute coordinates are the ONLY scheme verified
+                    # visually correct; rebuilding per frame avoids the
+                    # stale-cache freeze. Footprint meshes are small (<=657
+                    # faces at size 64); per-frame rebuild cost is negligible
+                    # next to the brick preview redraws.
+                    from ..core.brush_shapes import stamp_offsets
+                    abs_cells = [
+                        (g_coord[0] + o[0], g_coord[1] + o[1], g_coord[2] + o[2])
+                        for o in stamp_offsets(g_key[0], g_key[1])
+                    ]
+                    shell_verts, shell_lines = build_ghost_shell_mesh_data(abs_cells, v_size)
+                    face_verts, face_tris = build_ghost_face_mesh_data(abs_cells, v_size)
+                    if len(shell_verts):
+                        lines_batch = batch_for_shader(
+                            uniform_shader, 'LINES', {"pos": shell_verts}, indices=shell_lines
+                        )
+                        faces_batch = None
+                        if len(face_verts):
+                            faces_batch = batch_for_shader(
+                                uniform_shader, 'TRIS', {"pos": face_verts}, indices=face_tris
+                            )
+                        ghost_batch = (lines_batch, faces_batch)
+                    else:
+                        ghost_batch = False
+                    if ghost_batch:
+                        lines_batch, faces_batch = ghost_batch
+                        g_color = _GHOST_STATE.get("color", (1.0, 1.0, 1.0, 0.35))
+                        gpu.state.blend_set('ALPHA')
+                        gpu.state.depth_test_set('NONE')
+                        gpu.state.depth_mask_set(False)
+                        # Fill: translucent tint over every exposed face.
+                        if faces_batch is not None:
+                            try:
+                                uniform_shader.bind()
+                                uniform_shader.uniform_float("color", (g_color[0], g_color[1], g_color[2], 0.35))
+                                faces_batch.draw(uniform_shader)
+                            except Exception:
+                                pass
+                        # Outline: auto-contrasted against the voxels UNDER
+                        # the footprint (light line over dark voxels, dark
+                        # line over light ones; falls back to the brush tint
+                        # in bare space). NOTE: use UNIFORM_COLOR for both
+                        # batches - FLAT_COLOR demands a per-vertex "color"
+                        # attribute our mesh data does not carry, and a failed
+                        # build here silently killed the pass in 0.19.1.
+                        line_color = _ghost_outline_color(entry, abs_cells)
+                        uniform_shader.bind()
+                        uniform_shader.uniform_float("color", line_color)
+                        gpu.state.line_width_set(1.5)
+                        lines_batch.draw(uniform_shader)
                 except Exception:
                     pass
 

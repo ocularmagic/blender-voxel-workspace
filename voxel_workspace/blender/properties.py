@@ -310,6 +310,25 @@ class VoxelSceneProperties(PropertyGroup):
             ),
             default=False,
         )
+        brush_shape: EnumProperty(
+            name="Brush Shape",
+            description="Footprint shape for the add/erase voxel brush",
+            items=[
+                ("SPHERE", "Sphere", "Spherical brush footprint", 'MESH_UVSPHERE', 0),
+                ("CUBE", "Cube", "Cubic brush footprint", 'MESH_CUBE', 1),
+            ],
+            default="SPHERE",
+        )
+        brush_diameter: IntProperty(
+            name="Brush Size",
+            description=(
+                "Brush footprint width in voxels. 1 = the classic single-voxel "
+                "brush; larger values stamp overlapping sphere/cube clusters"
+            ),
+            default=1,
+            min=1,
+            max=64,
+        )
         create_size_x: IntProperty(
             name="Size X",
             description="Default X dimension in voxels for new volumes",

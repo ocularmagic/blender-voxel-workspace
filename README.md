@@ -3,13 +3,15 @@
 Voxel Workspace is a Blender add-on for creating and editing bounded voxel
 models with separate Surface and Volume voxel types.
 
-Current release: **0.17.0**
+Current release: **0.19.0**
 
 ## What you can do
 
 - Create voxel fields with adjustable dimensions and voxel size.
 - Paint Surface voxels and Volume voxels independently.
 - Draw on the interior of ANY bounding-box wall, not just the floor.
+- Paint with shaped brush footprints: a sphere or cube stamp, 1–64 voxels
+  wide, with a live ghost preview under the cursor.
 - Use separate editable color palettes for Surface and Volume materials.
 - Add, erase, and repaint voxels with Blender undo support.
 - Import GLB and glTF models and convert them into voxel fields.
@@ -59,6 +61,34 @@ whose inner surface fronts the viewer. A wall seen through its backside (for
 example the ceiling when looking down) shows no grid and cannot be drawn on.
 Occupied voxels always take priority — placing against existing geometry,
 mirroring, erasing, and repainting all behave exactly as before.
+
+## Brush footprints (sphere / cube stamps)
+
+The **Brushes/Shapes** tab in the 3D Viewport's N-panel configures how much
+the add and erase tools paint at once:
+
+1. Pick a **Sphere** or **Cube** footprint.
+2. Set the **Size** in voxels — this is the footprint's width (diameter).
+   Size 1 is the classic single-voxel brush; size 5 sphere fills a rounded
+   5-wide ball, size 7 cube a 7×7×7 block.
+
+While a tool is active, a translucent **ghost preview** shows exactly which
+cells the next click will write — palette-colored for add, red for erase —
+centered on your cursor. The auto-contrast outline stays visible over both
+dark and light voxels.
+
+Placement rules:
+
+- **Add** writes only *empty* cells inside the footprint; existing voxels are
+  never overwritten.
+- **Erase** removes every occupied cell in the footprint.
+- Large footprints **clip to the root**: if the shape extends past the voxel
+  root, only its overlap with the root is painted.
+- Dragging interpolates stamps along the stroke path so fast mouse moves do
+  not skip cells. Each click-drag is one undo step.
+
+Other tools (Fill Interior, mirror copies, resize, stretch/squash) are not
+affected by brush size.
 
 ## Adjusting the voxel root size
 
@@ -112,6 +142,14 @@ until accepted or cancelled, and each released drag is its own undo step.
 **Boundary protection:** while scaling is active or not, an add brush never
 overwrites voxels at the root's edge. If the root is full to a side, drawing
 against that side does nothing instead of replacing the outermost voxels.
+
+## Palette editor
+
+Clicking a palette entry shows its material controls directly under the
+swatches — no expanding needed. **Base Color** leads the list (for owned
+Surface materials it edits the true display color behind the render-only edge
+overlay), followed by **Metallic, Roughness, IOR,** and **Alpha**. Everything
+else in the shader stays out of the way.
 
 ## Importing a model
 

@@ -79,7 +79,15 @@ class VOXEL_OT_shelf_activate(Operator):
             self.report({"WARNING"}, "No voxel tool bound to this asset")
             return {"CANCELLED"}
         mod, name = op_id.split(".")
-        getattr(getattr(bpy.ops, mod), name)()
+        op = getattr(getattr(bpy.ops, mod), name)
+        try:
+            op()
+        except RuntimeError as exc:
+            # Poll can legitimately reject the click (e.g. the shelf focus
+            # leaves no active voxel object). Surface a readable message
+            # instead of the raw Python traceback.
+            self.report({"WARNING"}, str(exc).replace("Operator bpy.ops.voxel.", "Voxel tool unavailable: "))
+            return {"CANCELLED"}
         return {"FINISHED"}
 
 

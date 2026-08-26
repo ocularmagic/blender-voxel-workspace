@@ -37,12 +37,42 @@ def is_valid_voxel_object(obj_or_context: Any) -> bool:
     if obj_or_context is None:
         return False
     mesh = resolve_authoritative_mesh(obj_or_context)
-    return bool(
-        mesh is not None
-        and hasattr(mesh, "voxel_workspace")
-        and mesh.voxel_workspace.is_voxel_mesh
-        and bool(mesh.voxel_workspace.uuid)
-    )
+    if mesh is not None and hasattr(mesh, "voxel_workspace") \
+            and mesh.voxel_workspace.is_voxel_mesh and bool(mesh.voxel_workspace.uuid):
+        return True
+    # Asset-shelf clicks can leave the view_layer without an active object
+    # while a voxel volume is already loaded in the runtime registry. Trust
+    # that registry entry so tool polls keep working mid-session.
+    try:
+        from ..blender.runtime import get_active_volume_uuid
+        return bool(get_active_volume_uuid())
+    except Exception:
+        return False
+
+
+def _resolve_v_ctx_with_fallback(context: Any):
+    """Resolve volume context, falling back to the runtime registry.
+
+    Asset-shelf activation can drop the active object from context while an
+    editing session is still valid. Resolve through any object carrying the
+    active volume UUID so tool startup does not dead-end.
+    """
+    v_ctx = resolve_volume_context(context)
+    if v_ctx is not None and v_ctx.mesh_uuid:
+        return v_ctx
+    try:
+        from ..blender.runtime import get_active_volume_uuid
+        active_uuid = get_active_volume_uuid()
+    except Exception:
+        return None
+    if not active_uuid or bpy is None:
+        return None
+    for obj in getattr(getattr(context, "scene", None), "objects", []):
+        mesh = getattr(obj, "data", None)
+        props = getattr(mesh, "voxel_workspace", None) if mesh is not None else None
+        if props is not None and getattr(props, "uuid", "") == active_uuid:
+            return resolve_volume_context(obj)
+    return None
 
 
 def _start_brush(context: Any, operator: Any, mode: str) -> set:
@@ -51,7 +81,7 @@ def _start_brush(context: Any, operator: Any, mode: str) -> set:
     if str(getattr(context.scene.voxel_workspace, "active_tool", "NONE")) in ("ADJUST", "SCALE"):
         operator.report({'WARNING'}, "Exit the active adjustment tool before editing voxels")
         return {'CANCELLED'}
-    v_ctx = resolve_volume_context(context)
+    v_ctx = _resolve_v_ctx_with_fallback(context)
     if v_ctx is None or not v_ctx.mesh_uuid:
         operator.report({'ERROR'}, "Active object is not a valid voxel field")
         return {'CANCELLED'}
