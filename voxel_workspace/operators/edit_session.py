@@ -48,6 +48,9 @@ def is_valid_voxel_object(obj_or_context: Any) -> bool:
 def _start_brush(context: Any, operator: Any, mode: str) -> set:
     if bpy is None or context is None:
         return {'CANCELLED'}
+    if str(getattr(context.scene.voxel_workspace, "active_tool", "NONE")) == "ADJUST":
+        operator.report({'WARNING'}, "Exit Adjust Voxel Root before editing voxels")
+        return {'CANCELLED'}
     v_ctx = resolve_volume_context(context)
     if v_ctx is None or not v_ctx.mesh_uuid:
         operator.report({'ERROR'}, "Active object is not a valid voxel field")

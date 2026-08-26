@@ -103,6 +103,32 @@ def validate_no_orphaned_voxels(
     return None
 
 
+def apply_new_extents(mesh: Any, grid: Any, entry: Any,
+                      new_min: Tuple[int, int, int],
+                      new_max: Tuple[int, int, int]) -> None:
+    """Apply validated extents and rebuild the derived volume state."""
+    props = mesh.voxel_workspace
+    props.extent_min = new_min
+    props.extent_max = new_max
+    grid.extent_min = new_min
+    grid.extent_max_exclusive = new_max
+    bs = int(grid.brick_size)
+    for bcoord in list(grid.bricks.keys()):
+        bmin = (bcoord[0] * bs, bcoord[1] * bs, bcoord[2] * bs)
+        bmax = (bmin[0] + bs, bmin[1] + bs, bmin[2] + bs)
+        if (bmax[0] <= new_min[0] or bmin[0] >= new_max[0]
+                or bmax[1] <= new_min[1] or bmin[1] >= new_max[1]
+                or bmax[2] <= new_min[2] or bmin[2] >= new_max[2]):
+            del grid.bricks[bcoord]
+            grid.dirty_bricks.discard(bcoord)
+    from ..blender.persistence import serialize_volume
+    serialize_volume(mesh, grid, dirty_only=False)
+    from ..blender.mesh_sync import sync_volume_mesh
+    entry.cpu_buffers.clear()
+    sync_volume_mesh(mesh, grid=grid, entry=entry, dirty_only=False,
+                     ensure_material=False, voxel_size=float(entry.voxel_size))
+
+
 class VOXEL_OT_resize_volume(Operator):
     """Resize the active voxel volume; cannot shrink below placed voxels."""
 
@@ -191,34 +217,7 @@ class VOXEL_OT_resize_volume(Operator):
             self.report({'ERROR'}, err)
             return {'CANCELLED'}
 
-        # Update authoritative metadata first
-        props.extent_min = new_min
-        props.extent_max = new_max
-        grid.extent_min = new_min
-        grid.extent_max_exclusive = new_max
-
-        # Prune bricks that now lie entirely outside the shrunk extent
-        bs = int(grid.brick_size)
-        from ..core.coords import split_coord
-        for bcoord in list(grid.bricks.keys()):
-            bmin = (bcoord[0] * bs, bcoord[1] * bs, bcoord[2] * bs)
-            bmax = (bmin[0] + bs, bmin[1] + bs, bmin[2] + bs)
-            if (
-                bmax[0] <= new_min[0] or bmin[0] >= new_max[0]
-                or bmax[1] <= new_min[1] or bmin[1] >= new_max[1]
-                or bmax[2] <= new_min[2] or bmin[2] >= new_max[2]
-            ):
-                del grid.bricks[bcoord]
-                grid.dirty_bricks.discard(bcoord)
-
-        # Persist full state and rebuild the render mesh + proxies
-        from ..blender.persistence import serialize_volume
-        serialize_volume(mesh, grid, dirty_only=False)
-
-        from ..blender.mesh_sync import sync_volume_mesh
-        entry.cpu_buffers.clear()
-        sync_volume_mesh(mesh, grid=grid, entry=entry, dirty_only=False,
-                         ensure_material=False, voxel_size=float(entry.voxel_size))
+        apply_new_extents(mesh, grid, entry, new_min, new_max)
 
         try:
             bpy.ops.ed.undo_push(message="Resize Voxel Volume")

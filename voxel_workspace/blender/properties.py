@@ -477,6 +477,7 @@ class VoxelSceneProperties(PropertyGroup):
                 ("REPAINT", "Repaint", "Repaint brush is active"),
                 ("ERASE", "Erase", "Erase brush is active"),
                 ("PLACE", "Legacy Place", "Compatibility alias for Add Surface"),
+                ("ADJUST", "Adjust Voxel Root", "Voxel root adjustment is active"),
             ],
             default="NONE",
         )

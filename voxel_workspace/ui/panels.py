@@ -20,6 +20,7 @@ from ..operators.palette import (
     get_used_palette_counts,
     get_palette_selection,
 )
+from ..operators.adjust_voxel_root import is_adjustment_active
 from .palette_icons import generate_swatch_icon_id
 from ..blender.material_domains import get_palette, display_rgba_from_entry
 
@@ -428,23 +429,21 @@ def _draw_volume_settings(layout: Any, context: Any) -> None:
         # Resize section: only meaningful when a volume exists
         resize_box = vol_box.box()
         resize_box.label(text="Resize Volume", icon="FULLSCREEN_ENTER")
-        rcol = resize_box.column(align=True)
-        rrow = rcol.row(align=True)
-        rrow.prop(scene.voxel_workspace, "resize_size_x", text="X")
-        rrow.prop(scene.voxel_workspace, "resize_anchor_x", text="")
-        rrow = rcol.row(align=True)
-        rrow.prop(scene.voxel_workspace, "resize_size_y", text="Y")
-        rrow.prop(scene.voxel_workspace, "resize_anchor_y", text="")
-        rrow = rcol.row(align=True)
-        rrow.prop(scene.voxel_workspace, "resize_size_z", text="Z")
-        rrow.prop(scene.voxel_workspace, "resize_anchor_z", text="")
-        rop = resize_box.operator("voxel.resize_volume", text="Apply Resize", icon="ARROW_LEFTRIGHT")
-        rop.size_x = scene.voxel_workspace.resize_size_x
-        rop.size_y = scene.voxel_workspace.resize_size_y
-        rop.size_z = scene.voxel_workspace.resize_size_z
-        rop.anchor_x = scene.voxel_workspace.resize_anchor_x
-        rop.anchor_y = scene.voxel_workspace.resize_anchor_y
-        rop.anchor_z = scene.voxel_workspace.resize_anchor_z
+        resize_box.label(text="Drag an axis arrow at any corner. Existing voxels cannot be removed.", icon="INFO")
+        adjusting = is_adjustment_active()
+        resize_box.operator("voxel.adjust_voxel_root", text="Adjust voxel root size", icon="ARROW_LEFTRIGHT")
+        if adjusting:
+            action_row = resize_box.row(align=True)
+            action_row.scale_y = 1.25
+            action_row.operator(
+                "voxel.accept_adjust_voxel_root",
+                text="Accept",
+                icon="CHECKMARK",
+                depress=True,
+            )
+            cancel_row = action_row.row(align=True)
+            cancel_row.alert = True
+            cancel_row.operator("voxel.cancel_adjust_voxel_root", text="Cancel", icon="CANCEL")
 
         export_row = vol_box.row()
         export_row.scale_y = 1.2

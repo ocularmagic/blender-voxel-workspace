@@ -3,7 +3,7 @@
 Voxel Workspace is a Blender add-on for creating and editing bounded voxel
 models with separate Surface and Volume voxel types.
 
-Current release: **0.14.0**
+Current release: **0.16.0**
 
 ## What you can do
 
@@ -44,6 +44,30 @@ Current release: **0.14.0**
 Choosing a palette color or clicking a volume icon does not activate a voxel
 placement tool by itself. The **Add Surface** and **Add Volume** tools must be
 selected from the Asset Shelf.
+
+## Adjusting the voxel root size
+
+To resize the voxel root interactively:
+
+1. Open the **Voxel** tab in the 3D Viewport’s right-side N-panel.
+2. Click **Adjust voxel root size**.
+3. Drag one of the colored axis arrows at a root corner:
+   - **Red** arrows resize along X.
+   - **Green** arrows resize along Y.
+   - **Blue** arrows resize along Z.
+4. Continue dragging any arrow to make additional one-axis changes.
+5. Click **Accept** to keep all changes, or click **Cancel** to restore the
+   root dimensions from before adjustment mode began.
+
+The Accept and Cancel controls appear below the adjustment button while the
+tool is active. They are highlighted to make the active confirmation scope
+clear. Pressing **Esc** has the same effect as Cancel.
+
+Adjustment mode prevents Surface/Volume painting, erasing, and repainting
+until it is accepted or cancelled. A resize never moves existing voxels or
+silently deletes them. An empty root can be reduced to one voxel per axis;
+when voxels are present, the root cannot be reduced past the occupied voxel
+bounds. Growth is limited to 512 voxels per axis.
 
 ## Importing a model
 
