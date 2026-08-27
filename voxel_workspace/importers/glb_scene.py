@@ -196,6 +196,7 @@ def stage_glb(
     volume_obj: Any,
     padding: int = 1,
     keep_source: bool = False,
+    included_object_names: Optional[Sequence[str]] = None,
 ) -> EvaluatedSource:
     """Import, evaluate, fit, and optionally keep or discard staging objects."""
     imported: List[Any] = []
@@ -203,8 +204,15 @@ def stage_glb(
         imported = import_gltf_objects(bpy, filepath)
         if not imported:
             raise ValueError("GLB import created no objects")
+        if included_object_names is not None:
+            selected_names = {str(name) for name in included_object_names}
+            evaluated_objects = [obj for obj in imported if obj.name in selected_names]
+            if not evaluated_objects:
+                raise ValueError("None of the selected GLB mesh objects were imported")
+        else:
+            evaluated_objects = imported
         world_tris, uvs, mat_i, materials, closed, names, warnings = evaluate_mesh_objects(
-            bpy, imported, context
+            bpy, evaluated_objects, context
         )
         voxel_size = float(volume_obj.data.voxel_workspace.voxel_size)
         voxel_tris = world_to_voxel_space(world_tris, volume_obj.matrix_world, voxel_size)

@@ -4,12 +4,12 @@ import uuid
 
 try:
     import bpy
-    from bpy.props import FloatProperty, IntProperty
+    from bpy.props import BoolProperty, FloatProperty, IntProperty
     from bpy.types import Operator
 except ImportError:
     bpy = None
     Operator = object
-    IntProperty = FloatProperty = None
+    BoolProperty = IntProperty = FloatProperty = None
 
 from ..core.tagged_grid import TaggedVoxelGrid
 from ..blender.properties import (
@@ -76,6 +76,12 @@ class VOXEL_OT_create_volume(Operator):
             description="World-space edge length of a single voxel",
             default=1.0,
             min=0.0001,
+        )
+        push_undo: BoolProperty(
+            name="Push Undo",
+            description="Create a separate undo step",
+            default=True,
+            options={'HIDDEN'},
         )
 
     def execute(self, context: Any) -> set:
@@ -207,7 +213,7 @@ class VOXEL_OT_create_volume(Operator):
             context.view_layer.objects.active = root_obj
 
         # 8. Push one explicit undo step for creation
-        if hasattr(bpy.ops, "ed") and hasattr(bpy.ops.ed, "undo_push"):
+        if bool(self.push_undo) and hasattr(bpy.ops, "ed") and hasattr(bpy.ops.ed, "undo_push"):
             try:
                 bpy.ops.ed.undo_push(message="Create Voxel Volume")
             except Exception:

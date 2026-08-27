@@ -5,7 +5,7 @@ add-on for Blender** (5.2 LTS). Paint, sculpt, mirror, and fill bounded
 voxel models with separate Surface and Volume voxel types, import GLB/glTF
 models, and export voxel geometry for 3D printing or game engines.
 
-Current release: **0.19.0**
+Current release: **0.20.0**
 
 ## What you can do
 
@@ -155,10 +155,27 @@ else in the shader stays out of the way.
 
 ## Importing a model
 
-1. Create or select a voxel field.
-2. In the Voxel panel, choose **Import GLB into Volume**.
-3. Select a `.glb` or `.gltf` file.
-4. Choose the padding, occupancy mode, and palette size, then confirm.
+1. In the Voxel panel's **GLB Import** section, choose **Analyze GLB** and
+   select a `.glb` or `.gltf` file. No voxel field is required first.
+2. Review the detected mesh objects. The analyzer selects the primary detailed
+   geometry and excludes obvious low-detail bounds helpers; toggle any object
+   to override that recommendation.
+3. Choose **Draft**, **Balanced**, **Fine**, or a custom complete maximum-axis
+   size. The other two volume axes follow the selected geometry's proportions
+   without rotating it. Balanced is the default exterior-detail recommendation.
+4. Choose an independent **Palette Detail** level: Draft, Balanced, Fine, or a
+   custom maximum color count. This can be mixed freely with any geometry level;
+   for example, Fine geometry with a Draft palette or Draft geometry with a Fine
+   palette. Recommendations use perceptual color error from the selected source
+   materials and textures.
+5. Leave **Override Voxel Size** off to preserve the GLB's physical dimensions,
+   or enable it to set the world-space voxel size explicitly.
+6. Choose the padding, occupancy mode, and alpha cutoff, then
+   select **Create and Import GLB**.
+
+The target can instead use the standard Create Volume X/Y/Z dimensions or an
+existing selected voxel field. The entered maximum axis is the complete volume
+dimension, including padding.
 
 Imported colors are sampled and reduced to the selected palette size. Larger
 palette sizes preserve more color variation.

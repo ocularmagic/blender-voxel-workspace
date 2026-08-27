@@ -356,6 +356,102 @@ class VoxelSceneProperties(PropertyGroup):
             default=1.0,
             min=0.0001,
         )
+        glb_filepath: StringProperty(
+            name="GLB File",
+            description="Analyzed GLB or glTF source file",
+            subtype='FILE_PATH',
+            default="",
+        )
+        glb_target_mode: EnumProperty(
+            name="Target",
+            description="How the import target volume is chosen",
+            items=[
+                ("MAX_AXIS", "Maximum Axis", "Create an aspect-matched volume from a maximum complete dimension"),
+                ("PANEL_DIMENSIONS", "Panel Dimensions", "Create a volume using the X, Y, Z values above"),
+                ("EXISTING", "Selected Volume", "Import into the selected voxel volume"),
+            ],
+            default="MAX_AXIS",
+        )
+        glb_quality: EnumProperty(
+            name="Exterior Detail",
+            description="Analyzer recommendation used for the maximum volume axis",
+            items=[
+                ("DRAFT", "Draft", "Lower-cost exterior silhouette"),
+                ("BALANCED", "Balanced", "Estimated knee between exterior detail and volume cost"),
+                ("FINE", "Fine", "Higher-cost preservation of recesses and thin features"),
+                ("CUSTOM", "Custom", "Use the custom maximum-axis value"),
+            ],
+            default="BALANCED",
+        )
+        glb_custom_max_axis: IntProperty(
+            name="Maximum Axis",
+            description="Complete maximum volume dimension, including padding",
+            default=128,
+            min=1,
+            max=512,
+        )
+        glb_padding: IntProperty(
+            name="Padding",
+            description="Empty voxel border included inside the complete volume dimensions",
+            default=1,
+            min=0,
+            max=32,
+        )
+        glb_override_voxel_size: BoolProperty(
+            name="Override Voxel Size",
+            description="Use an explicit voxel size instead of preserving the GLB's physical dimensions",
+            default=False,
+        )
+        glb_voxel_size: FloatProperty(
+            name="Voxel Size",
+            description="World-space voxel edge length when physical-size preservation is overridden",
+            default=1.0,
+            min=0.0001,
+        )
+        glb_occupancy: EnumProperty(
+            name="Occupancy",
+            description="Solid fill or exterior shell conversion",
+            items=[
+                ("SOLID", "Solid", "Fill the interior of closed meshes"),
+                ("SHELL", "Surface Shell", "Occupy only voxels near the source surface"),
+            ],
+            default="SOLID",
+        )
+        glb_palette_quality: EnumProperty(
+            name="Palette Detail",
+            description="Independent analyzer recommendation for imported color fidelity",
+            items=[
+                ("DRAFT", "Draft", "Simplified dominant color families"),
+                ("BALANCED", "Balanced", "Estimated knee between perceptual color accuracy and material cost"),
+                ("FINE", "Fine", "Stricter preservation of subtle color variation"),
+                ("CUSTOM", "Custom", "Use the custom maximum palette size"),
+            ],
+            default="BALANCED",
+        )
+        glb_palette_size: IntProperty(
+            name="Maximum Colors",
+            description="Custom maximum generated surface palette colors",
+            default=64,
+            min=1,
+            max=255,
+        )
+        glb_alpha_cutoff: FloatProperty(
+            name="Alpha Cutoff",
+            description="Surface samples below this alpha are treated as empty",
+            default=0.1,
+            min=0.0,
+            max=1.0,
+        )
+        glb_keep_source: BoolProperty(
+            name="Keep Source Objects",
+            description="Keep imported GLB objects hidden in a staging collection",
+            default=False,
+        )
+        glb_clear_and_replace: BoolProperty(
+            name="Clear and Replace Volume",
+            description="Allow import to overwrite voxels in the selected volume",
+            default=False,
+        )
         resize_size_x: IntProperty(
             name="Size X",
             description="New X dimension in voxels for the active volume",

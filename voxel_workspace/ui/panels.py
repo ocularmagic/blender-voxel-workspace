@@ -22,6 +22,8 @@ from ..operators.palette import (
 )
 from ..operators.adjust_voxel_root import is_adjustment_active
 from ..operators.scale_voxels import is_scaling_active
+from ..operators.import_glb import get_glb_analysis
+from ..voxelization.resolution_analysis import volume_dimensions
 from .palette_icons import generate_swatch_icon_id
 from ..blender.material_domains import get_palette, display_rgba_from_entry
 
@@ -418,7 +420,123 @@ def _draw_volume_settings(layout: Any, context: Any) -> None:
     else:
         create_box.operator("voxel.create_volume", text="Create Volume", icon='ADD')
 
-    # 2. Active Volume Context & Inspection
+    # 2. GLB analysis and create/import workflow. This is independent of an
+    # active volume so Maximum Axis remains the default first-class path.
+    glb_box = layout.box()
+    glb_box.label(text="GLB Import", icon="IMPORT")
+    analysis = get_glb_analysis(scene)
+    analyze_row = glb_box.row(align=True)
+    analyze_row.operator("voxel.analyze_glb", text="Analyze GLB...", icon="FILEBROWSER")
+    if analysis is not None:
+        analyze_row.label(text=analysis.filepath.rsplit("\\", 1)[-1].rsplit("/", 1)[-1])
+        if len(analysis.objects) == 1:
+            item = analysis.objects[0]
+            glb_box.label(
+                text=f"Mesh: {item.name} — {item.triangle_count:,} triangles",
+                icon="OUTLINER_OB_MESH",
+            )
+        else:
+            objects_box = glb_box.box()
+            objects_box.label(text="Detected Meshes", icon="OUTLINER_OB_MESH")
+            for object_index, item in enumerate(analysis.objects):
+                row = objects_box.row(align=True)
+                toggle = row.operator(
+                    "voxel.toggle_glb_object",
+                    text="",
+                    icon="CHECKBOX_HLT" if item.included else "CHECKBOX_DEHLT",
+                    depress=item.included,
+                )
+                toggle.object_index = object_index
+                primary = " (Primary)" if item.primary else ""
+                row.label(text=f"{item.name}{primary}")
+                row.label(text=f"{item.triangle_count:,} tris")
+
+        glb_box.prop(sc_props, "glb_target_mode")
+        if sc_props.glb_target_mode == "MAX_AXIS":
+            glb_box.prop(sc_props, "glb_quality", expand=True)
+            rec = analysis.recommendations
+            quality_max = {
+                "DRAFT": rec.draft,
+                "BALANCED": rec.balanced,
+                "FINE": rec.fine,
+                "CUSTOM": int(sc_props.glb_custom_max_axis),
+            }[sc_props.glb_quality]
+            if sc_props.glb_quality == "CUSTOM":
+                glb_box.prop(sc_props, "glb_custom_max_axis")
+            try:
+                suggested_dims = volume_dimensions(
+                    analysis.dimensions, quality_max, int(sc_props.glb_padding)
+                )
+                cells = suggested_dims[0] * suggested_dims[1] * suggested_dims[2]
+                glb_box.label(
+                    text=f"Target: {suggested_dims[0]} × {suggested_dims[1]} × {suggested_dims[2]} ({cells:,} cells)",
+                    icon="INFO",
+                )
+            except ValueError as exc:
+                glb_box.label(text=str(exc), icon="ERROR")
+            preset_row = glb_box.row(align=True)
+            preset_row.label(text=f"Draft {rec.draft}")
+            preset_row.label(text=f"Balanced {rec.balanced}")
+            preset_row.label(text=f"Fine {rec.fine}")
+        elif sc_props.glb_target_mode == "PANEL_DIMENSIONS":
+            glb_box.label(
+                text=f"Target: {sc_props.create_size_x} × {sc_props.create_size_y} × {sc_props.create_size_z}",
+                icon="INFO",
+            )
+        else:
+            existing_ctx = resolve_volume_context(context)
+            if existing_ctx is None or existing_ctx.mesh is None:
+                glb_box.label(text="Select a voxel volume first", icon="ERROR")
+            else:
+                glb_box.prop(sc_props, "glb_clear_and_replace")
+
+        glb_box.prop(sc_props, "glb_padding")
+        if sc_props.glb_target_mode != "EXISTING":
+            glb_box.prop(sc_props, "glb_override_voxel_size")
+            if sc_props.glb_override_voxel_size:
+                glb_box.prop(sc_props, "glb_voxel_size")
+            else:
+                glb_box.label(text="Physical dimensions preserved", icon="CHECKMARK")
+        options = glb_box.column(align=True)
+        options.prop(sc_props, "glb_occupancy")
+        palette_box = glb_box.box()
+        palette_box.label(text="Palette Detail", icon="COLOR")
+        palette_box.prop(sc_props, "glb_palette_quality", expand=True)
+        pal_rec = analysis.palette_recommendations
+        if sc_props.glb_palette_quality == "CUSTOM":
+            palette_box.prop(sc_props, "glb_palette_size")
+        palette_presets = palette_box.row(align=True)
+        palette_presets.label(text=f"Draft {pal_rec.draft}")
+        palette_presets.label(text=f"Balanced {pal_rec.balanced}")
+        palette_presets.label(text=f"Fine {pal_rec.fine}")
+        options.prop(sc_props, "glb_alpha_cutoff")
+        options.prop(sc_props, "glb_keep_source")
+
+        import_row = glb_box.row()
+        import_row.scale_y = 1.25
+        import_row.enabled = any(item.included for item in analysis.objects)
+        op = import_row.operator(
+            "voxel.import_glb",
+            text="Import into Selected Volume" if sc_props.glb_target_mode == "EXISTING" else "Create and Import GLB",
+            icon="IMPORT",
+        )
+        op.filepath = analysis.filepath
+        op.target_mode = sc_props.glb_target_mode
+        op.quality = sc_props.glb_quality
+        op.maximum_axis = sc_props.glb_custom_max_axis
+        op.padding = sc_props.glb_padding
+        op.override_voxel_size = sc_props.glb_override_voxel_size
+        op.voxel_size = sc_props.glb_voxel_size
+        op.occupancy = sc_props.glb_occupancy
+        op.palette_quality = sc_props.glb_palette_quality
+        op.palette_size = sc_props.glb_palette_size
+        op.alpha_cutoff = sc_props.glb_alpha_cutoff
+        op.keep_source = sc_props.glb_keep_source
+        op.clear_and_replace = sc_props.glb_clear_and_replace
+    else:
+        glb_box.label(text="Analyze a source file to choose geometry and detail", icon="INFO")
+
+    # 3. Active Volume Context & Inspection
     v_ctx = resolve_volume_context(context)
     is_voxel = v_ctx is not None and v_ctx.mesh is not None
 
@@ -462,10 +580,6 @@ def _draw_volume_settings(layout: Any, context: Any) -> None:
         info_col.label(text=f"Occupied Bricks: {occupied_bricks}")
         empty = occupied_bricks == 0
         info_col.label(text="Volume is empty" if empty else "Volume has voxels")
-        import_row = vol_box.row()
-        import_row.scale_y = 1.2
-        import_row.operator("voxel.import_glb", text="Import GLB into Volume", icon="IMPORT")
-
         # Resize section: only meaningful when a volume exists
         resize_box = vol_box.box()
         resize_box.label(text="Resize Volume", icon="FULLSCREEN_ENTER")
