@@ -442,11 +442,6 @@ class VoxelSceneProperties(PropertyGroup):
             min=0.0,
             max=1.0,
         )
-        glb_keep_source: BoolProperty(
-            name="Keep Source Objects",
-            description="Keep imported GLB objects hidden in a staging collection",
-            default=False,
-        )
         glb_clear_and_replace: BoolProperty(
             name="Clear and Replace Volume",
             description="Allow import to overwrite voxels in the selected volume",

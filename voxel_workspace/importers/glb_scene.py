@@ -8,7 +8,6 @@ from ..voxelization.fit import FitResult, apply_fit, contain_fit
 from .glb_materials import extract_material
 
 
-STAGING_COLLECTION_NAME = "Voxel GLB Source"
 LARGE_CELL_COUNT = 128 * 128 * 128
 
 
@@ -22,20 +21,6 @@ class EvaluatedSource:
     fit: FitResult
     object_names: List[str]
     warnings: List[str] = field(default_factory=list)
-    imported_object_names: List[str] = field(default_factory=list)
-
-
-def _ensure_collection(bpy: Any, name: str, hidden: bool = True) -> Any:
-    col = bpy.data.collections.get(name)
-    if col is None:
-        col = bpy.data.collections.new(name)
-        scene = bpy.context.scene
-        if scene is not None and col.name not in scene.collection.children:
-            scene.collection.children.link(col)
-    if hidden:
-        col.hide_viewport = True
-        col.hide_render = True
-    return col
 
 
 def import_gltf_objects(bpy: Any, filepath: str) -> List[Any]:
@@ -195,10 +180,9 @@ def stage_glb(
     filepath: str,
     volume_obj: Any,
     padding: int = 1,
-    keep_source: bool = False,
     included_object_names: Optional[Sequence[str]] = None,
 ) -> EvaluatedSource:
-    """Import, evaluate, fit, and optionally keep or discard staging objects."""
+    """Import, evaluate, fit, and discard temporary source objects."""
     imported: List[Any] = []
     try:
         imported = import_gltf_objects(bpy, filepath)
@@ -227,20 +211,8 @@ def stage_glb(
             padding=padding,
         )
         fitted = apply_fit(voxel_tris, fit)
-        imported_names = [o.name for o in imported]
-        if keep_source:
-            col = _ensure_collection(bpy, STAGING_COLLECTION_NAME, hidden=True)
-            for obj in imported:
-                for other in list(obj.users_collection):
-                    other.objects.unlink(obj)
-                if obj.name not in col.objects:
-                    col.objects.link(obj)
-                obj.hide_set(True)
-                obj.hide_viewport = True
-                obj.hide_render = True
-        else:
-            _delete_objects(bpy, imported)
-            imported = []
+        _delete_objects(bpy, imported)
+        imported = []
         return EvaluatedSource(
             triangles=fitted,
             uvs=uvs,
@@ -250,10 +222,9 @@ def stage_glb(
             fit=fit,
             object_names=names,
             warnings=warnings,
-            imported_object_names=imported_names if keep_source else [],
         )
     except Exception:
-        if imported and not keep_source:
+        if imported:
             try:
                 _delete_objects(bpy, imported)
             except Exception:

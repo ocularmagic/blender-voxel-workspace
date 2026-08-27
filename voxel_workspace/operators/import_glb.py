@@ -309,7 +309,6 @@ class VOXEL_OT_import_glb(Operator):
         )
         palette_size: IntProperty(name="Maximum Colors", default=64, min=1, max=255)
         alpha_cutoff: FloatProperty(name="Alpha Cutoff", default=0.1, min=0.0, max=1.0)
-        keep_source: BoolProperty(name="Keep Source Objects", default=False)
         clear_and_replace: BoolProperty(name="Clear and Replace Volume", default=False)
 
     def invoke(self, context: Any, event: Any) -> set:
@@ -339,7 +338,6 @@ class VOXEL_OT_import_glb(Operator):
         if self.palette_quality == "CUSTOM":
             layout.prop(self, "palette_size")
         layout.prop(self, "alpha_cutoff")
-        layout.prop(self, "keep_source")
 
     def execute(self, context: Any) -> set:
         if bpy is None or context is None:
@@ -423,7 +421,7 @@ class VOXEL_OT_import_glb(Operator):
             palette_limit = _palette_maximum(analysis, self.palette_quality, self.palette_size)
             source = stage_glb(
                 bpy, context, str(path), v_ctx.surface_object,
-                padding=int(self.padding), keep_source=bool(self.keep_source),
+                padding=int(self.padding),
                 included_object_names=included_names,
             )
             result = voxelize_fitted_mesh(

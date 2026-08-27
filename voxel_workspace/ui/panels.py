@@ -510,7 +510,6 @@ def _draw_volume_settings(layout: Any, context: Any) -> None:
         palette_presets.label(text=f"Balanced {pal_rec.balanced}")
         palette_presets.label(text=f"Fine {pal_rec.fine}")
         options.prop(sc_props, "glb_alpha_cutoff")
-        options.prop(sc_props, "glb_keep_source")
 
         import_row = glb_box.row()
         import_row.scale_y = 1.25
@@ -531,7 +530,6 @@ def _draw_volume_settings(layout: Any, context: Any) -> None:
         op.palette_quality = sc_props.glb_palette_quality
         op.palette_size = sc_props.glb_palette_size
         op.alpha_cutoff = sc_props.glb_alpha_cutoff
-        op.keep_source = sc_props.glb_keep_source
         op.clear_and_replace = sc_props.glb_clear_and_replace
     else:
         glb_box.label(text="Analyze a source file to choose geometry and detail", icon="INFO")
