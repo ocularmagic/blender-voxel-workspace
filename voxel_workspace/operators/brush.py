@@ -374,7 +374,10 @@ class BrushSession:
         seen = set()
         added_erase_marks: List[Tuple[VoxelCoord, VoxelCoord]] = []
 
-        for target in self.stamp_footprint(entry, center):
+        # Repaint remains a one-voxel brush regardless of the configured add/
+        # erase footprint, but its anchor still expands across active mirrors.
+        footprint = [center] if self.mode == 'REPAINT' else self.stamp_footprint(entry, center)
+        for target in footprint:
             if target in seen:
                 continue
             candidates = [target]
@@ -420,8 +423,12 @@ class BrushSession:
                             grid.set(write_coord, cell.index)
                         entry.dirty_bricks.add(split_coord(write_coord, grid.brick_size)[0])
                 else:
-                    # REPAINT stays single-cell: recolors the anchor voxel only.
-                    if write_coord != center:
+                    # REPAINT never creates voxels. Recolor the occupied anchor
+                    # and each occupied active-mirror partner as one stroke.
+                    if is_tagged:
+                        if grid.get_cell(write_coord) == CELL_EMPTY:
+                            continue
+                    elif not grid.get(write_coord):
                         continue
                     self.stroke.record(grid, write_coord, cell if is_tagged else cell.index)
                     if is_tagged:
