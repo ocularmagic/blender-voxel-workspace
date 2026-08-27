@@ -1,9 +1,8 @@
 """Operators for volume palette management: select, edit, add, duplicate, and remove/remap."""
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+import math
 import numpy as np
-
-import colorsys
 
 try:
     import bpy
@@ -1485,10 +1484,10 @@ class VOXEL_OT_compact_palette(Operator):
 
 
 class VOXEL_OT_sort_palette_color(Operator):
-    """Sort the palette entries by hue."""
+    """Sort palette entries into perceptual hue families and shades."""
     bl_idname = "voxel.sort_palette_color"
     bl_label = "Sort Palette by Hue"
-    bl_description = "Reassign palette indices by sorting the display colors by hue"
+    bl_description = "Group display colors by perceptual hue, then order each family by shade"
     bl_options = {'REGISTER'}
 
     if bpy is not None:
@@ -1502,20 +1501,39 @@ class VOXEL_OT_sort_palette_color(Operator):
         )
 
     @staticmethod
-    def _hue_sort_key(entry: Any, pal_type: str) -> Tuple[float, float, float]:
-        """Return an (hue, saturation, value) key for sorting.
+    def _hue_sort_key(entry: Any, pal_type: str) -> Tuple[float, ...]:
+        """Return a perceptual hue-family/shade key derived from OKLCH.
 
-        Resolves the entry's color the same way the swatch renderer does
-        (material-first via ``display_rgba_from_entry``), gamma-corrects the
-        linear RGBA to sRGB bytes, then converts to HSV. Hue wraps; sorting
-        ascending on the full (hue, sat, value) tuple gives a readable wheel.
+        OKLCH keeps lightness and colorfulness perceptually meaningful across
+        the gamut. Chromatic colors are placed into 30-degree hue families and
+        sorted dark-to-light within each family. Near-neutrals have no useful
+        perceptual hue, so they form a final dark-to-light neutral ramp.
         """
         from ..blender.material_domains import display_rgba_from_entry
         rgba = display_rgba_from_entry(entry, pal_type)
-        srgb = rgba_linear_to_srgb_bytes(rgba)
-        r, g, b = (float(srgb[0]) / 255.0, float(srgb[1]) / 255.0, float(srgb[2]) / 255.0)
-        h, s, v = colorsys.rgb_to_hsv(r, g, b)
-        return (h, s, v)
+        r, g, b = (max(0.0, min(1.0, float(component))) for component in rgba[:3])
+
+        # Linear sRGB -> OKLab (Björn Ottosson's reference matrices).
+        l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b
+        m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b
+        s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b
+        l_root = l ** (1.0 / 3.0)
+        m_root = m ** (1.0 / 3.0)
+        s_root = s ** (1.0 / 3.0)
+        lightness = 0.2104542553 * l_root + 0.7936177850 * m_root - 0.0040720468 * s_root
+        a = 1.9779984951 * l_root - 2.4285922050 * m_root + 0.4505937099 * s_root
+        b_axis = 0.0259040371 * l_root + 0.7827717662 * m_root - 0.8086757660 * s_root
+        chroma = math.hypot(a, b_axis)
+        hue_degrees = math.degrees(math.atan2(b_axis, a)) % 360.0
+
+        # Below this perceptual chroma, tiny RGB differences make hue unstable
+        # while the swatches still read as gray. Keep those colors together.
+        if chroma < 0.03:
+            return (1.0, 0.0, lightness, chroma, hue_degrees, float(entry.index))
+
+        # Center bucket zero on red so the 0/360 wrap does not split that family.
+        hue_bucket = math.floor(((hue_degrees + 15.0) % 360.0) / 30.0)
+        return (0.0, float(hue_bucket), lightness, chroma, hue_degrees, float(entry.index))
 
     def execute(self, context):
         v_ctx = resolve_volume_context(context)
