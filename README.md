@@ -5,7 +5,7 @@ add-on for Blender** (5.2 LTS). Paint, sculpt, mirror, and fill bounded
 voxel models with separate Surface and Volume voxel types, import GLB/glTF
 models, and export voxel geometry for 3D printing or game engines.
 
-Current release: **0.20.0**
+Current release: **0.21.0**
 
 ## What you can do
 
@@ -179,6 +179,25 @@ dimension, including padding.
 
 Imported colors are sampled and reduced to the selected palette size. Larger
 palette sizes preserve more color variation.
+
+## Importing a MagicaVoxel .vox file
+
+In the Voxel panel's **VOX Import** section, choose **Import VOX** and pick a
+`.vox` file. This always creates a brand-new voxel volume — it never touches
+an existing Voxel Root:
+
+- The volume is sized exactly to the `.vox` model's dimensions and centered in
+  X/Y with its bottom layer at Z=0, matching the Create Volume convention.
+- The Surface palette is rebuilt fresh from the file's colors — no existing
+  palette entries are reused. Each used color becomes a Surface palette entry
+  with its own native material.
+- Fully transparent colors are skipped, and voxels referencing them import as
+  empty cells. MagicaVoxel's index-0 (empty) voxels are skipped too.
+- Multi-model (packed) and raw-voxel (version 200) `.vox` files are rejected
+  with a readable error — re-save as a standard single-model file in
+  MagicaVoxel if needed.
+
+The import is one undo step.
 
 ## Mirroring
 

@@ -45,6 +45,10 @@ from .import_glb import (
     VOXEL_OT_import_glb,
     IMPORT_GLB_OPERATOR_CLASSES,
 )
+from .import_vox import (
+    VOXEL_OT_import_vox,
+    VOX_IMPORT_OPERATOR_CLASSES,
+)
 from .export_slices import (
     VOXEL_OT_export_slices,
     EXPORT_OPERATOR_CLASSES,
@@ -71,6 +75,7 @@ OPERATOR_CLASSES: List[Type] = [
     *BRUSH_OPERATOR_CLASSES,
     *PALETTE_OPERATOR_CLASSES,
     *IMPORT_GLB_OPERATOR_CLASSES,
+    *VOX_IMPORT_OPERATOR_CLASSES,
     *EXPORT_OPERATOR_CLASSES,
     *EXPORT_OBJ_OPERATOR_CLASSES,
     *SHELF_OPERATOR_CLASSES,
@@ -100,6 +105,7 @@ __all__ = [
     "VOXEL_OT_save_palette_preset",
     "VOXEL_OT_load_palette_preset",
     "VOXEL_OT_import_glb",
+    "VOXEL_OT_import_vox",
     "VOXEL_OT_export_obj",
     "VOXEL_OT_shelf_activate",
     "VOXEL_OT_mirror",

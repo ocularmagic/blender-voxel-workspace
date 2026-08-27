@@ -534,6 +534,15 @@ def _draw_volume_settings(layout: Any, context: Any) -> None:
     else:
         glb_box.label(text="Analyze a source file to choose geometry and detail", icon="INFO")
 
+    # 2b. MagicaVoxel .vox import — always creates a brand-new volume with a
+    # fresh palette built from the file, independent of any active volume.
+    vox_box = layout.box()
+    vox_box.label(text="VOX Import", icon="IMPORT")
+    vox_box.label(text="Creates a new volume sized to the .vox model", icon="INFO")
+    vox_row = vox_box.row()
+    vox_row.scale_y = 1.2
+    vox_row.operator("voxel.import_vox", text="Import VOX...", icon="FILEBROWSER")
+
     # 3. Active Volume Context & Inspection
     v_ctx = resolve_volume_context(context)
     is_voxel = v_ctx is not None and v_ctx.mesh is not None
